@@ -107,15 +107,21 @@ export default function App() {
   const [parentTab, setParentTab] = useState<'settings' | 'records'>('settings');
   const [childPhase, setChildPhase] = useState<'loading' | 'noconfig' | 'ready' | 'solving' | 'result'>('loading');
   
-  const [config, setConfig] = useState<Config>({
-    grades: [1],
-    unitIds: ["1-1-1"],
-    difficulty: 2,
-    style: 'vertical',
-    count: 30,
-    geminiKey: localStorage.getItem("gemini_key") || ""
+  const [config, setConfig] = useState<Config>(() => {
+    const saved = localStorage.getItem("app_config");
+    if (saved) return JSON.parse(saved);
+    return {
+      grades: [1],
+      unitIds: ["1-1-1"],
+      difficulty: 2,
+      style: 'vertical',
+      count: 20,
+      geminiKey: localStorage.getItem("gemini_key") || ""
+    };
   });
   
+  const [parentPin, setParentPin] = useState(localStorage.getItem("parent_pin") || "1234");
+  const [newPin, setNewPin] = useState("");
   const [records, setRecords] = useState<LearningRecord[]>([]);
   const [stars, setStars] = useState(parseInt(localStorage.getItem("stars") || "0"));
   const [earnedBadges, setEarnedBadges] = useState<string[]>(JSON.parse(localStorage.getItem("badges") || "[]"));
@@ -154,9 +160,19 @@ export default function App() {
   const saveConfig = (newConfig: Config) => {
     setConfig(newConfig);
     localStorage.setItem("gemini_key", newConfig.geminiKey);
-    // In a real app, this would sync to Firebase
     localStorage.setItem("app_config", JSON.stringify(newConfig));
     showToast("설정이 저장되었습니다!");
+  };
+
+  const updatePin = () => {
+    if (newPin.length !== 4) {
+      showToast("PIN 번호는 4자리여야 합니다.");
+      return;
+    }
+    setParentPin(newPin);
+    localStorage.setItem("parent_pin", newPin);
+    setNewPin("");
+    showToast("PIN 번호가 변경되었습니다!");
   };
 
   const handlePinInput = (n: number) => {
@@ -164,8 +180,7 @@ export default function App() {
     const newBuffer = pinBuffer + n;
     setPinBuffer(newBuffer);
     if (newBuffer.length === 4) {
-      const stored = localStorage.getItem("parent_pin") || "1234";
-      if (newBuffer === stored) {
+      if (newBuffer === parentPin) {
         setPinOverlay(false);
         setPinBuffer("");
         setScreen('parent');
@@ -210,7 +225,7 @@ export default function App() {
         const prompt = ok 
           ? `방금 "${p.expr}=${p.ans}" 문제를 맞혔어! 아이에게 칭찬 한마디 해줘 (반말, 짧게, 이모지 절대 사용 금지, 세련된 응원)`
           : `방금 "${p.expr}" 문제를 틀렸어 (정답:${p.ans}). 아이에게 응원 한마디 해줘 (반말, 짧게, 이모지 절대 사용 금지, 세련된 격려)`;
-        const res = await ai.models.generateContent({ model: "gemini-2.0-flash", contents: [{ parts: [{ text: prompt }] }] });
+        const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
         setCharFeedback(res.text);
       } catch {
         setCharFeedback(ok ? "정답이야! 정말 잘했어." : "괜찮아. 다음 문제에 집중해보자.");
@@ -277,7 +292,7 @@ export default function App() {
         const ai = new GoogleGenAI({ apiKey: config.geminiKey });
         const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${problems.map((p, i) => `${i+1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로 줘: { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "칭찬 메시지" }`;
         const res = await ai.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: "gemini-3-flash-preview",
           contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64 } }] }],
           config: { responseMimeType: "application/json" }
         });
@@ -411,7 +426,147 @@ export default function App() {
 
             <main className="p-6 max-w-2xl mx-auto">
               {parentTab === 'settings' ? (
-                <div className="space-y-6 animate-slide-up">
+                <div className="space-y-6 animate-slide-up pb-12">
+                  {/* Grade & Unit Selection */}
+                  <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
+                      <Award size={18} className="text-brand-600" />
+                      <h3>학년 및 단원 선택</h3>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">학년 선택 (중복 가능)</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[1, 2, 3, 4, 5, 6].map(g => (
+                          <button
+                            key={g}
+                            onClick={() => {
+                              const newGrades = config.grades.includes(g)
+                                ? config.grades.filter(x => x !== g)
+                                : [...config.grades, g].sort();
+                              if (newGrades.length === 0) return;
+                              setConfig({ ...config, grades: newGrades });
+                            }}
+                            className={`py-2 rounded-xl border-2 font-bold transition-all ${
+                              config.grades.includes(g)
+                                ? 'bg-brand-600 border-brand-600 text-white'
+                                : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200'
+                            }`}
+                          >
+                            {g}학년
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">단원 선택</label>
+                      <div className="max-h-60 overflow-y-auto border border-slate-100 rounded-xl p-2 space-y-1 bg-slate-50/50">
+                        {UNITS.filter(u => config.grades.includes(u.grade)).map(u => (
+                          <button
+                            key={u.id}
+                            onClick={() => {
+                              const newUnitIds = config.unitIds.includes(u.id)
+                                ? config.unitIds.filter(id => id !== u.id)
+                                : [...config.unitIds, u.id];
+                              setConfig({ ...config, unitIds: newUnitIds });
+                            }}
+                            className={`w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-between ${
+                              config.unitIds.includes(u.id)
+                                ? 'bg-white text-brand-700 shadow-sm border border-brand-100'
+                                : 'text-slate-500 hover:bg-white/50'
+                            }`}
+                          >
+                            <span><span className="text-[10px] opacity-50 mr-2">{u.grade}-{u.sem}</span> {u.name}</span>
+                            {config.unitIds.includes(u.id) && <Check size={14} className="text-brand-500" />}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <button 
+                          className="text-[10px] font-bold text-brand-600 uppercase tracking-widest hover:underline"
+                          onClick={() => {
+                            const filtered = UNITS.filter(u => config.grades.includes(u.grade)).map(u => u.id);
+                            setConfig({ ...config, unitIds: filtered });
+                          }}
+                        >
+                          전체 선택
+                        </button>
+                        <button 
+                          className="text-[10px] font-bold text-slate-400 uppercase tracking-widest hover:underline"
+                          onClick={() => setConfig({ ...config, unitIds: [] })}
+                        >
+                          전체 해제
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+
+                  {/* Difficulty & Style */}
+                  <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
+                      <Settings size={18} className="text-brand-600" />
+                      <h3>상세 설정</h3>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">난이도</label>
+                      <div className="flex bg-slate-100 p-1 rounded-xl">
+                        {[1, 2, 3].map(d => (
+                          <button
+                            key={d}
+                            onClick={() => setConfig({ ...config, difficulty: d })}
+                            className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
+                              config.difficulty === d
+                                ? 'bg-white text-brand-600 shadow-sm'
+                                : 'text-slate-400 hover:text-slate-600'
+                            }`}
+                          >
+                            {d === 1 ? '쉬움' : d === 2 ? '보통' : '어려움'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">문제 수 ({config.count}문제)</label>
+                      <input 
+                        type="range" 
+                        min="5" 
+                        max="100" 
+                        step="5"
+                        value={config.count}
+                        onChange={(e) => setConfig({ ...config, count: parseInt(e.target.value) })}
+                        className="w-full accent-brand-600"
+                      />
+                      <div className="flex justify-between text-[10px] font-bold text-slate-300 uppercase tracking-tighter">
+                        <span>5문제</span>
+                        <span>50문제</span>
+                        <span>100문제</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">문제 형식</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(['vertical', 'horizontal'] as const).map(s => (
+                          <button
+                            key={s}
+                            onClick={() => setConfig({ ...config, style: s })}
+                            className={`py-3 rounded-xl border-2 font-bold transition-all flex flex-col items-center gap-1 ${
+                              config.style === s
+                                ? 'bg-brand-50 border-brand-600 text-brand-700'
+                                : 'bg-white border-slate-100 text-slate-400 hover:border-slate-200'
+                            }`}
+                          >
+                            <span className="text-lg">{s === 'vertical' ? '세로식' : '가로식'}</span>
+                            <span className="text-[10px] opacity-60 font-medium">{s === 'vertical' ? '12 + 34' : '12 + 34 ='}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </section>
+
                   <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                     <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
                       <Calculator size={18} className="text-brand-600" />
@@ -427,8 +582,34 @@ export default function App() {
                         onChange={(e) => setConfig({...config, geminiKey: e.target.value})}
                       />
                     </div>
-                    <button className="btn-primary w-full" onClick={() => saveConfig(config)}>설정 저장</button>
                   </section>
+
+                  <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                    <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
+                      <Lock size={18} className="text-brand-600" />
+                      <h3>보안 설정</h3>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">새 PIN 번호 (4자리)</label>
+                      <div className="flex gap-2">
+                        <input 
+                          type="password" 
+                          maxLength={4}
+                          className="input-field flex-1" 
+                          placeholder="****" 
+                          value={newPin}
+                          onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                        />
+                        <button className="btn-secondary px-6" onClick={updatePin}>변경</button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <div className="pt-4">
+                    <button className="btn-primary w-full py-4 text-lg shadow-xl shadow-brand-100" onClick={() => saveConfig(config)}>
+                      모든 설정 저장하기
+                    </button>
+                  </div>
 
                   <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                     <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
@@ -439,6 +620,10 @@ export default function App() {
                       현재 설정된 단원의 문제를 종이 학습지로 인쇄할 수 있습니다. 아이가 직접 손으로 풀 수 있게 해주세요.
                     </p>
                     <button className="btn-secondary w-full flex items-center justify-center gap-2" onClick={() => {
+                      if (config.unitIds.length === 0) {
+                        showToast("단원을 먼저 선택해주세요!");
+                        return;
+                      }
                       const p = makeProblems(config.unitIds, config.difficulty, config.count);
                       setProblems(p);
                       setTimeout(() => handlePrint(), 100);
