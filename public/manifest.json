@@ -2,16 +2,24 @@
   "name": "우리집 수학 에이스",
   "short_name": "수학 에이스",
   "description": "초등학생 연산 실력 향상을 위한 맞춤형 학습 시스템",
-  "start_url": "/",
+  "start_url": "/?v=2",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait",
   "background_color": "#ffffff",
   "theme_color": "#0284c7",
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "any",
+      "src": "/icon.svg?v=2",
+      "sizes": "192x192 512x512",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg?v=2",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
     }
   ]
 }
