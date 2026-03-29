@@ -4,9 +4,15 @@ export function ri(a: number, b: number) { return Math.floor(Math.random() * (b 
 export function gcd(a: number, b: number): number { return b === 0 ? a : gcd(b, a % b); }
 
 export function makeProblem(unit: any, diff: number): any {
-  const scale = diff === 1 ? .5 : diff === 2 ? .75 : 1;
+  const scale = diff === 1 ? .4 : diff === 2 ? .75 : 1;
   const hi = Math.max(unit.min, Math.floor(unit.max * scale));
   const op = unit.ops[ri(0, unit.ops.length - 1)];
+
+  // Special handling for Grade 1 - make it easier on Easy
+  let currentHi = hi;
+  if (unit.grade === 1 && diff === 1) {
+    currentHi = Math.min(hi, 15); // Limit to 15 for Grade 1 Easy
+  }
 
   if (op === "×") {
     const a = ri(unit.min, hi), b = ri(unit.min, hi);
@@ -59,8 +65,23 @@ export function makeProblem(unit: any, diff: number): any {
     return { expr: `${a} + ${b} × ${c}`, op: "mix", ans: String(a + b * c) };
   }
   
-  let a = ri(unit.min, hi), b = ri(unit.min, hi);
+  let a = ri(unit.min, currentHi), b = ri(unit.min, currentHi);
   if (op === "-" && a < b) { let t = a; a = b; b = t; }
+
+  // Check for carry/borrow constraints
+  if (unit.noCarry && op === "+") {
+    if ((a % 10) + (b % 10) >= 10) return makeProblem(unit, diff);
+  }
+  if (unit.noBorrow && op === "-") {
+    if ((a % 10) < (b % 10)) return makeProblem(unit, diff);
+  }
+  if (unit.withCarry && op === "+") {
+    if ((a % 10) + (b % 10) < 10) return makeProblem(unit, diff);
+  }
+  if (unit.withBorrow && op === "-") {
+    if ((a % 10) >= (b % 10)) return makeProblem(unit, diff);
+  }
+
   const ans = op === "+" ? a + b : a - b;
   if (ans < 0 || ans > unit.maxR) return makeProblem(unit, diff);
   return { expr: `${a} ${op} ${b}`, a, b, op, ans: String(ans) };

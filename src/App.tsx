@@ -171,6 +171,35 @@ export default function App() {
   const [isGrading, setIsGrading] = useState(false);
   const [isHintLoading, setIsHintLoading] = useState(false);
 
+  const toggleCorrection = (idx: number) => {
+    const newAnswers = [...answers];
+    newAnswers[idx].ok = !newAnswers[idx].ok;
+    setAnswers(newAnswers);
+    
+    // Update the last record in state and localStorage
+    if (records.length > 0) {
+      const updatedRecords = [...records];
+      const lastRecord = { ...updatedRecords[0] };
+      lastRecord.answers = newAnswers;
+      lastRecord.correct = newAnswers.filter(a => a.ok).length;
+      lastRecord.wrongExprs = problems.filter((_, i) => !newAnswers[i].ok).map(p => p.expr);
+      updatedRecords[0] = lastRecord;
+      setRecords(updatedRecords);
+      
+      const stored = JSON.parse(localStorage.getItem("records") || "{}");
+      stored[lastRecord.ts] = lastRecord;
+      localStorage.setItem("records", JSON.stringify(stored));
+      
+      // Update stars if needed (simplified: just recalculate from all records)
+      const allRecords = Object.values(stored) as LearningRecord[];
+      const totalStars = allRecords.reduce((acc, r) => acc + Math.floor(r.correct / 5), 0);
+      setStars(totalStars);
+      localStorage.setItem("stars", String(totalStars));
+    }
+  };
+
+  const [selectedRecord, setSelectedRecord] = useState<LearningRecord | null>(null);
+
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: printRef });
 
@@ -303,7 +332,9 @@ export default function App() {
       total,
       ts: Date.now(),
       unitNames: Array.from(new Set(problems.map(p => p.unitName))),
-      wrongExprs: problems.filter((_, i) => !finalAnswers[i].ok).map(p => p.expr)
+      wrongExprs: problems.filter((_, i) => !finalAnswers[i].ok).map(p => p.expr),
+      problems: [...problems],
+      answers: [...finalAnswers]
     };
 
     const stored = JSON.parse(localStorage.getItem("records") || "{}");
@@ -731,24 +762,81 @@ export default function App() {
                 </div>
               ) : (
                 <div className="space-y-4 animate-slide-up">
-                  {records.length === 0 ? (
-                    <div className="text-center py-20">
-                      <History size={48} className="mx-auto text-slate-200 mb-4" />
-                      <p className="text-slate-400 font-medium">아직 학습 기록이 없습니다.</p>
-                    </div>
-                  ) : (
-                    records.map((r, i) => (
-                      <div key={i} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center group hover:border-brand-300 transition-all">
-                        <div className="space-y-1">
-                          <div className="font-bold text-slate-900">{r.unitNames.join(", ")}</div>
-                          <div className="text-xs text-slate-400 font-mono">{r.date}</div>
+                  {selectedRecord ? (
+                    <div className="space-y-6">
+                      <button 
+                        onClick={() => setSelectedRecord(null)}
+                        className="flex items-center gap-2 text-brand-600 font-bold hover:underline"
+                      >
+                        <ChevronLeft size={20} />
+                        목록으로 돌아가기
+                      </button>
+                      
+                      <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h3 className="text-xl font-black text-slate-900">{selectedRecord.unitNames.join(", ")}</h3>
+                            <p className="text-sm text-slate-400">{selectedRecord.date}</p>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-3xl font-black text-brand-600">{selectedRecord.correct} / {selectedRecord.total}</div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">SCORE</div>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <div className="text-2xl font-black text-brand-600 font-display">{r.correct} / {r.total}</div>
-                          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">SCORE</div>
+
+                        <div className="space-y-3">
+                          <h4 className="text-sm font-bold text-slate-900">상세 결과 (오답 노트)</h4>
+                          <div className="grid gap-2">
+                            {selectedRecord.problems?.map((p, i) => (
+                              <div key={i} className={`p-4 rounded-2xl border flex justify-between items-center ${selectedRecord.answers?.[i]?.ok ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
+                                <div className="flex items-center gap-4">
+                                  <span className="text-xs font-bold text-slate-400 w-4">{i + 1}</span>
+                                  <span className="font-bold text-slate-700">{p.expr} = {p.ans}</span>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <div className="text-right">
+                                    <div className={`text-sm font-black ${selectedRecord.answers?.[i]?.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                      입력: {selectedRecord.answers?.[i]?.val || "-"}
+                                    </div>
+                                    <div className="text-[10px] font-bold text-slate-400 uppercase">{selectedRecord.answers?.[i]?.ok ? 'Correct' : 'Wrong'}</div>
+                                  </div>
+                                  {selectedRecord.answers?.[i]?.ok ? <CheckCircle2 size={20} className="text-emerald-500" /> : <XCircle size={20} className="text-rose-500" />}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    ))
+                    </div>
+                  ) : (
+                    <>
+                      {records.length === 0 ? (
+                        <div className="text-center py-20">
+                          <History size={48} className="mx-auto text-slate-200 mb-4" />
+                          <p className="text-slate-400 font-medium">아직 학습 기록이 없습니다.</p>
+                        </div>
+                      ) : (
+                        records.map((r, i) => (
+                          <button 
+                            key={i} 
+                            onClick={() => setSelectedRecord(r)}
+                            className="w-full text-left bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center group hover:border-brand-300 transition-all active:scale-[0.98]"
+                          >
+                            <div className="space-y-1">
+                              <div className="font-bold text-slate-900">{r.unitNames.join(", ")}</div>
+                              <div className="text-xs text-slate-400 font-mono">{r.date}</div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <div className="text-right">
+                                <div className="text-2xl font-black text-brand-600 font-display">{r.correct} / {r.total}</div>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">SCORE</div>
+                              </div>
+                              <ChevronRight size={20} className="text-slate-300 group-hover:text-brand-500" />
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -1016,43 +1104,70 @@ export default function App() {
                       <p className="text-slate-500 font-medium">오늘의 학습을 모두 마쳤어.</p>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 py-6">
-                      <div className="bg-slate-50 p-6 rounded-3xl">
-                        <div className="text-3xl font-black text-brand-600 font-display">
-                          {answers.filter(a => a.ok).length} <span className="text-sm text-slate-400">/ {problems.length}</span>
-                        </div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">CORRECT</div>
-                      </div>
-                      <div className="bg-slate-50 p-6 rounded-3xl">
-                        <div className="text-3xl font-black text-amber-500 font-display flex items-center justify-center gap-1">
-                          <Star size={24} className="fill-amber-500" />
-                          {Math.floor(answers.filter(a => a.ok).length / 5)}
-                        </div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">EARNED</div>
-                      </div>
-                    </div>
-
-                    <AnimatePresence>
-                      {(finalFeedback || isFinalFeedbackLoading) && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          className="p-6 bg-brand-50 rounded-[2rem] text-brand-700 font-bold text-lg border border-brand-100 relative overflow-hidden"
-                        >
-                          <div className="absolute top-0 right-0 p-2 opacity-10">
-                            <Sparkles size={48} />
-                          </div>
-                          {isFinalFeedbackLoading ? (
-                            <div className="flex items-center justify-center gap-2">
-                              <Loader2 className="animate-spin" size={20} />
-                              <span>에이스를 위한 응원 메시지 작성 중...</span>
+                        <div className="grid grid-cols-2 gap-4 py-6">
+                          <div className="bg-slate-50 p-6 rounded-3xl">
+                            <div className="text-3xl font-black text-brand-600 font-display">
+                              {answers.filter(a => a.ok).length} <span className="text-sm text-slate-400">/ {problems.length}</span>
                             </div>
-                          ) : (
-                            <p className="relative z-10 leading-relaxed">{finalFeedback}</p>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">CORRECT</div>
+                          </div>
+                          <div className="bg-slate-50 p-6 rounded-3xl">
+                            <div className="text-3xl font-black text-amber-500 font-display flex items-center justify-center gap-1">
+                              <Star size={24} className="fill-amber-500" />
+                              {Math.floor(answers.filter(a => a.ok).length / 5)}
+                            </div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">EARNED</div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 text-left">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-bold text-slate-900">상세 결과 (부모님이 수정할 수 있어요)</h4>
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">Click to Toggle</span>
+                          </div>
+                          <div className="grid gap-2 max-h-60 overflow-y-auto pr-2">
+                            {problems.map((p, i) => (
+                              <button 
+                                key={i} 
+                                onClick={() => toggleCorrection(i)}
+                                className={`w-full p-3 rounded-xl border flex justify-between items-center transition-all active:scale-[0.98] ${answers[i]?.ok ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}
+                              >
+                                <div className="flex items-center gap-3">
+                                  <span className="text-[10px] font-bold text-slate-400 w-4">{i + 1}</span>
+                                  <span className="text-sm font-bold text-slate-700">{p.expr} = {p.ans}</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                  <span className={`text-xs font-black ${answers[i]?.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    {answers[i]?.val || "-"}
+                                  </span>
+                                  {answers[i]?.ok ? <CheckCircle2 size={16} className="text-emerald-500" /> : <XCircle size={16} className="text-rose-500" />}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <AnimatePresence>
+                          {(finalFeedback || isFinalFeedbackLoading) && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="p-6 bg-brand-50 rounded-[2rem] text-brand-700 font-bold text-lg border border-brand-100 relative overflow-hidden"
+                            >
+                              <div className="absolute top-0 right-0 p-2 opacity-10">
+                                <Sparkles size={48} />
+                              </div>
+                              {isFinalFeedbackLoading ? (
+                                <div className="flex items-center justify-center gap-2">
+                                  <Loader2 className="animate-spin" size={20} />
+                                  <span>에이스를 위한 응원 메시지 작성 중...</span>
+                                </div>
+                              ) : (
+                                <p className="relative z-10 leading-relaxed whitespace-pre-wrap">{finalFeedback}</p>
+                              )}
+                            </motion.div>
                           )}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                        </AnimatePresence>
                   </div>
 
                   <button 

@@ -16,6 +16,8 @@ export interface LearningRecord {
   ts: number;
   unitNames: string[];
   wrongExprs: string[];
+  problems?: MathProblem[];
+  answers?: {val: string, ok: boolean}[];
 }
 
 export interface GradingResult {
