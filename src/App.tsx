@@ -32,6 +32,7 @@ import {
   Check,
   X,
   Loader2,
+  Lightbulb,
   Sparkles,
   Sun,
   Cloud
@@ -140,7 +141,9 @@ export default function App() {
   const [feedbackIcon, setFeedbackIcon] = useState<'check' | 'x' | null>(null);
   const [charFeedback, setCharFeedback] = useState("");
   const [hint, setHint] = useState("");
+  const [sessionGoal, setSessionGoal] = useState("");
   const [isGrading, setIsGrading] = useState(false);
+  const [isHintLoading, setIsHintLoading] = useState(false);
 
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: printRef });
@@ -194,7 +197,7 @@ export default function App() {
     }
   };
 
-  const startSolving = () => {
+  const startSolving = async () => {
     const newProblems = makeProblems(config.unitIds, config.difficulty, config.count);
     setProblems(newProblems);
     setAnswers([]);
@@ -205,6 +208,36 @@ export default function App() {
     setFeedbackIcon(null);
     setCharFeedback("");
     setHint("");
+    setSessionGoal("");
+
+    // AI Goal Setting
+    if (config.geminiKey) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: config.geminiKey });
+        const unitNames = Array.from(new Set(newProblems.map(p => p.unitName)));
+        const prompt = `오늘 풀 문제는 ${unitNames.join(", ")} 단원이야. 아이가 즐겁게 시작할 수 있도록 아주 짧고 신나는 목표 한마디 해줘! (반말, 이모지 듬뿍, 칭찬 가득)`;
+        const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
+        setSessionGoal(res.text);
+      } catch (err) {
+        setSessionGoal("오늘도 즐겁게 수학이랑 놀아보자! 화이팅! 🚀");
+      }
+    }
+  };
+
+  const getHint = async () => {
+    if (!config.geminiKey || isHintLoading || isAnsDisabled) return;
+    setIsHintLoading(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: config.geminiKey });
+      const p = problems[curIdx];
+      const prompt = `문제: ${p.expr}. 이 문제를 풀고 있는 아이에게 아주 친절하고 쉬운 힌트 하나만 줘. 정답을 직접 말하지 말고 원리를 깨닫게 도와줘. (반말, 이모지 사용, 아주 짧게)`;
+      const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
+      setHint(res.text);
+    } catch (err) {
+      setHint("천천히 다시 생각해보면 할 수 있어! 💪");
+    } finally {
+      setIsHintLoading(false);
+    }
   };
 
   const submitAnswer = async () => {
@@ -223,15 +256,15 @@ export default function App() {
       try {
         const ai = new GoogleGenAI({ apiKey: config.geminiKey });
         const prompt = ok 
-          ? `방금 "${p.expr}=${p.ans}" 문제를 맞혔어! 아이에게 칭찬 한마디 해줘 (반말, 짧게, 이모지 절대 사용 금지, 세련된 응원)`
-          : `방금 "${p.expr}" 문제를 틀렸어 (정답:${p.ans}). 아이에게 응원 한마디 해줘 (반말, 짧게, 이모지 절대 사용 금지, 세련된 격려)`;
+          ? `방금 "${p.expr}=${p.ans}" 문제를 맞혔어! 아이가 너무 기뻐할 수 있게 아주 신나고 귀여운 칭찬 한마디 해줘! (반말, 짧게, 이모지 듬뿍, 칭찬 폭발)`
+          : `방금 "${p.expr}" 문제를 틀렸어 (정답:${p.ans}). 아이가 속상해하지 않고 다시 도전하고 싶게 따뜻하고 귀여운 격려 한마디 해줘! (반말, 짧게, 이모지 듬뿍, 다정한 응원)`;
         const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
         setCharFeedback(res.text);
       } catch {
-        setCharFeedback(ok ? "정답이야! 정말 잘했어." : "괜찮아. 다음 문제에 집중해보자.");
+        setCharFeedback(ok ? "우와아! 정답이야! 넌 정말 천재인가봐! 🌟" : "아까비! 괜찮아, 다음 문제는 꼭 맞힐 수 있을 거야! 화이팅! 🔥");
       }
     } else {
-      setCharFeedback(ok ? "정답이야! 정말 잘했어." : "괜찮아. 다음 문제에 집중해보자.");
+      setCharFeedback(ok ? "정답이야! 정말 잘했어. ✨" : "괜찮아. 다음 문제에 집중해보자. 💪");
     }
 
     setTimeout(() => {
@@ -290,7 +323,7 @@ export default function App() {
       const base64 = (reader.result as string).split(',')[1];
       try {
         const ai = new GoogleGenAI({ apiKey: config.geminiKey });
-        const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${problems.map((p, i) => `${i+1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로 줘: { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "칭찬 메시지" }`;
+        const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${problems.map((p, i) => `${i+1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로 줘: { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 아주 따뜻하고 신나는 전체 피드백 (반말, 이모지 듬뿍)" }`;
         const res = await ai.models.generateContent({
           model: "gemini-3-flash-preview",
           contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64 } }] }],
@@ -336,7 +369,7 @@ export default function App() {
               </div>
               
               <h1 className="text-4xl font-black text-slate-900 mb-4 leading-tight font-display">
-                꼬마 수학자
+                우리집 수학 에이스
               </h1>
               <p className="text-slate-500 mb-12 leading-relaxed font-medium">
                 AI와 함께하는 우리 아이 맞춤형<br />수학 학습 솔루션
@@ -733,7 +766,7 @@ export default function App() {
                         <Sparkles size={24} />
                       </motion.div>
                     </div>
-                    <h2 className="text-3xl font-black text-slate-900 font-display">안녕, 꼬마 수학자!</h2>
+                    <h2 className="text-3xl font-black text-slate-900 font-display">안녕, 우리집 수학 에이스!</h2>
                     <p className="text-slate-500 font-medium">오늘은 어떤 문제를 풀어볼까?</p>
                   </div>
 
@@ -811,8 +844,18 @@ export default function App() {
                         initial={{ x: 20, opacity: 0 }}
                         animate={{ x: 0, opacity: 1 }}
                         exit={{ x: -20, opacity: 0 }}
-                        className="space-y-12"
+                        className="space-y-8"
                       >
+                        {sessionGoal && curIdx === 0 && !isAnsDisabled && (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="bg-brand-50 p-4 rounded-2xl text-brand-600 font-bold text-sm mb-4"
+                          >
+                            🎯 {sessionGoal}
+                          </motion.div>
+                        )}
+
                         <div className="text-7xl font-black text-slate-900 font-display tracking-tighter">
                           {problems[curIdx].expr} <span className="text-brand-500">＝</span>
                         </div>
@@ -845,6 +888,16 @@ export default function App() {
                             </motion.div>
                           )}
                         </div>
+
+                        {hint && !isAnsDisabled && (
+                          <motion.div 
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            className="p-4 bg-amber-50 rounded-2xl text-amber-700 font-bold text-sm border border-amber-100"
+                          >
+                            💡 {hint}
+                          </motion.div>
+                        )}
                       </motion.div>
                     </AnimatePresence>
 
@@ -861,14 +914,26 @@ export default function App() {
                     </AnimatePresence>
                   </div>
 
-                  <button 
-                    className="btn-primary w-full py-6 text-xl shadow-xl shadow-brand-100 flex items-center justify-center gap-3"
-                    onClick={submitAnswer}
-                    disabled={isAnsDisabled || !ansInput}
-                  >
-                    <span>정답 확인</span>
-                    <ArrowRight size={24} />
-                  </button>
+                  <div className="flex gap-3 w-full">
+                    {!isAnsDisabled && (
+                      <button 
+                        className="btn-secondary flex-1 py-6 text-xl flex items-center justify-center gap-2"
+                        onClick={getHint}
+                        disabled={isHintLoading}
+                      >
+                        {isHintLoading ? <Loader2 className="animate-spin" size={24} /> : <Lightbulb size={24} />}
+                        <span>힌트 보기</span>
+                      </button>
+                    )}
+                    <button 
+                      className="btn-primary flex-[2] py-6 text-xl shadow-xl shadow-brand-100 flex items-center justify-center gap-3"
+                      onClick={submitAnswer}
+                      disabled={isAnsDisabled || !ansInput}
+                    >
+                      <span>정답 확인</span>
+                      <ArrowRight size={24} />
+                    </button>
+                  </div>
                 </motion.div>
               )}
 

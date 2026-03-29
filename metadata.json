@@ -1,6 +1,6 @@
 {
-  "name": "꼬마 수학자 종이 학습지",
-  "description": "종이에 직접 쓰고 사진으로 채점하는 6세 맞춤형 AI 수학 학습지 서비스",
+  "name": "우리집 수학 에이스",
+  "description": "종이에 직접 쓰고 사진으로 채점하는 초등 맞춤형 AI 수학 학습지 서비스",
   "requestFramePermissions": [
     "camera"
   ]
