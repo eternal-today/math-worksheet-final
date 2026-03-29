@@ -77,25 +77,25 @@ const Toast = ({ message, show }: { message: string, show: boolean }) => (
 );
 
 const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[] }>(({ problems }, ref) => (
-  <div ref={ref} className="print-worksheet hidden print:block bg-white p-12">
-    <div className="flex justify-between items-end border-b-2 border-slate-900 pb-6 mb-12">
+  <div ref={ref} className="print-worksheet hidden print:block bg-white p-8">
+    <div className="flex justify-between items-end border-b-2 border-slate-900 pb-4 mb-8">
       <div>
-        <h2 className="text-4xl font-black text-slate-900 font-display">오늘의 수학 공부</h2>
-        <p className="text-slate-500 mt-2 font-medium text-lg">날짜: ____년 __월 __일 | 이름: ________</p>
+        <h2 className="text-3xl font-black text-slate-900 font-display">오늘의 수학 공부</h2>
+        <p className="text-slate-500 mt-1 font-medium text-base">날짜: ____년 __월 __일 | 이름: ________</p>
       </div>
       <div className="text-right">
-        <div className="text-slate-400 text-sm font-mono">LITTLE MATHEMATICIAN</div>
+        <div className="text-slate-400 text-[10px] font-mono tracking-widest uppercase">Our House Math Ace</div>
       </div>
     </div>
-    <div className="grid grid-cols-2 gap-x-16 gap-y-24">
+    <div className="grid grid-cols-2 gap-x-12 gap-y-12">
       {problems.map((p, idx) => (
-        <div key={idx} className="flex items-baseline gap-6">
-          <span className="text-slate-300 font-bold text-2xl font-mono">{String(idx + 1).padStart(2, '0')}</span>
-          <div className="flex items-center gap-6">
-            <span className="text-6xl font-black text-slate-800 tracking-tighter font-display">
+        <div key={idx} className="flex items-baseline gap-4">
+          <span className="text-slate-300 font-bold text-xl font-mono">{String(idx + 1).padStart(2, '0')}</span>
+          <div className="flex items-center gap-4">
+            <span className="text-4xl font-black text-slate-800 tracking-tighter font-display">
               {p.expr} ＝
             </span>
-            <div className="w-32 h-20 border-b-4 border-slate-200"></div>
+            <div className="w-24 h-12 border-b-2 border-slate-200"></div>
           </div>
         </div>
       ))}
@@ -142,6 +142,8 @@ export default function App() {
   const [charFeedback, setCharFeedback] = useState("");
   const [hint, setHint] = useState("");
   const [sessionGoal, setSessionGoal] = useState("");
+  const [finalFeedback, setFinalFeedback] = useState("");
+  const [isFinalFeedbackLoading, setIsFinalFeedbackLoading] = useState(false);
   const [isGrading, setIsGrading] = useState(false);
   const [isHintLoading, setIsHintLoading] = useState(false);
 
@@ -252,20 +254,7 @@ export default function App() {
     setAnswers(newAnswers);
 
     // AI Feedback
-    if (config.geminiKey) {
-      try {
-        const ai = new GoogleGenAI({ apiKey: config.geminiKey });
-        const prompt = ok 
-          ? `방금 "${p.expr}=${p.ans}" 문제를 맞혔어! 아이가 너무 기뻐할 수 있게 아주 신나고 귀여운 칭찬 한마디 해줘! (반말, 짧게, 이모지 듬뿍, 칭찬 폭발)`
-          : `방금 "${p.expr}" 문제를 틀렸어 (정답:${p.ans}). 아이가 속상해하지 않고 다시 도전하고 싶게 따뜻하고 귀여운 격려 한마디 해줘! (반말, 짧게, 이모지 듬뿍, 다정한 응원)`;
-        const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
-        setCharFeedback(res.text);
-      } catch {
-        setCharFeedback(ok ? "우와아! 정답이야! 넌 정말 천재인가봐! 🌟" : "아까비! 괜찮아, 다음 문제는 꼭 맞힐 수 있을 거야! 화이팅! 🔥");
-      }
-    } else {
-      setCharFeedback(ok ? "정답이야! 정말 잘했어. ✨" : "괜찮아. 다음 문제에 집중해보자. 💪");
-    }
+    setCharFeedback(ok ? "우와아! 정답이야! 🌟" : "아까비! 괜찮아, 할 수 있어! 🔥");
 
     setTimeout(() => {
       if (curIdx + 1 >= problems.length) {
@@ -281,9 +270,9 @@ export default function App() {
     }, ok ? 1200 : 1500);
   };
 
-  const finishSolving = (finalAnswers: {val: string, ok: boolean}[]) => {
+  const finishSolving = async (finalAnswers: {val: string, ok: boolean}[], aiFeedback?: string) => {
     const correct = finalAnswers.filter(a => a.ok).length;
-    const total = problems.length;
+    const total = finalAnswers.length;
     const newRecord: LearningRecord = {
       date: new Date().toLocaleDateString("ko-KR"),
       correct,
@@ -311,6 +300,23 @@ export default function App() {
     }
 
     setChildPhase('result');
+    setFinalFeedback("");
+
+    if (aiFeedback) {
+      setFinalFeedback(aiFeedback);
+    } else if (config.geminiKey) {
+      setIsFinalFeedbackLoading(true);
+      try {
+        const ai = new GoogleGenAI({ apiKey: config.geminiKey });
+        const prompt = `아이의 오늘 수학 학습 결과야. 총 ${total}문제 중 ${correct}문제를 맞혔어. 아이의 눈높이에 맞춰서 아주 따뜻하고 신나는 칭찬과 격려의 한마디를 해줘! (반말, 이모지 듬뿍, 칭찬 가득)`;
+        const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
+        setFinalFeedback(res.text);
+      } catch (err) {
+        setFinalFeedback("오늘 정말 고생 많았어! 너는 정말 멋진 수학 에이스야! 🌟");
+      } finally {
+        setIsFinalFeedbackLoading(false);
+      }
+    }
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -332,7 +338,7 @@ export default function App() {
         const data = JSON.parse(res.text);
         const gradedAnswers = data.corrections.map((c: any) => ({ val: c.userVal, ok: c.ok }));
         setAnswers(gradedAnswers);
-        finishSolving(gradedAnswers);
+        finishSolving(gradedAnswers, data.feedback);
       } catch (err) {
         alert("채점 중 오류가 발생했습니다.");
       } finally {
@@ -968,6 +974,28 @@ export default function App() {
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">EARNED</div>
                       </div>
                     </div>
+
+                    <AnimatePresence>
+                      {(finalFeedback || isFinalFeedbackLoading) && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="p-6 bg-brand-50 rounded-[2rem] text-brand-700 font-bold text-lg border border-brand-100 relative overflow-hidden"
+                        >
+                          <div className="absolute top-0 right-0 p-2 opacity-10">
+                            <Sparkles size={48} />
+                          </div>
+                          {isFinalFeedbackLoading ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <Loader2 className="animate-spin" size={20} />
+                              <span>에이스를 위한 응원 메시지 작성 중...</span>
+                            </div>
+                          ) : (
+                            <p className="relative z-10 leading-relaxed">{finalFeedback}</p>
+                          )}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
 
                   <button 
