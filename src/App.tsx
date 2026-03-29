@@ -208,6 +208,12 @@ export default function App() {
     // Load records from localStorage (mocking Firebase for now as per original fallback)
     const storedRecords = JSON.parse(localStorage.getItem("records") || "{}");
     setRecords(Object.values(storedRecords).sort((a: any, b: any) => b.ts - a.ts) as LearningRecord[]);
+
+    // Hide fallback if it exists
+    const fallback = document.getElementById('loading-fallback');
+    if (fallback) {
+      fallback.style.display = 'none';
+    }
   }, []);
 
   const showToast = (msg: string) => {
