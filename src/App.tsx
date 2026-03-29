@@ -69,7 +69,7 @@ const Toast = ({ message, show }: { message: string, show: boolean }) => (
         initial={{ opacity: 0, y: 20, x: "-50%" }}
         animate={{ opacity: 1, y: 0, x: "-50%" }}
         exit={{ opacity: 0, y: 20, x: "-50%" }}
-        className="fixed bottom-8 left-1/2 z-[9999] bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3"
+        className="fixed bottom-8 left-1/2 z-[9999] bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 print:hidden"
       >
         <CheckCircle2 size={18} className="text-brand-400" />
         <span className="font-medium text-sm">{message}</span>
@@ -79,7 +79,7 @@ const Toast = ({ message, show }: { message: string, show: boolean }) => (
 );
 
 const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[] }>(({ problems }, ref) => (
-  <div ref={ref} className="print-worksheet hidden print:block bg-white p-12 font-sans text-slate-900">
+  <div ref={ref} className="print-worksheet hidden print:block bg-white p-8 font-sans text-slate-900 w-full">
     {/* Header Section - Professional & Clean */}
     <div className="flex justify-between items-end border-b-4 border-slate-900 pb-6 mb-10">
       <div>
@@ -384,7 +384,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6"
+            className="fixed inset-0 z-50 bg-white flex flex-col items-center justify-center p-6 print:hidden"
           >
             <div className="absolute inset-0 bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:32px_32px] opacity-50"></div>
             
@@ -449,7 +449,7 @@ export default function App() {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -20 }}
-            className="min-h-screen bg-slate-50 pb-20"
+            className="min-h-screen bg-slate-50 pb-20 print:hidden"
           >
             <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-16 flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -763,7 +763,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="min-h-screen bg-slate-50 p-6 flex flex-col relative overflow-hidden"
+            className="min-h-screen bg-slate-50 p-6 flex flex-col relative overflow-hidden print:hidden"
           >
             {/* Decorative Background Elements */}
             <motion.div 
@@ -1076,7 +1076,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6"
+            className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6 print:hidden"
           >
             <motion.div 
               initial={{ scale: 0.9, opacity: 0 }}
