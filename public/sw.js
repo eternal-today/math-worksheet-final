@@ -1,5 +1,6 @@
 // Simple Service Worker for PWA
-const CACHE_NAME = 'math-ace-v2';
+// Simple Service Worker for PWA
+const CACHE_NAME = 'math-ace-v3';
 const ASSETS = [
   '/',
   '/index.html',
@@ -12,7 +13,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(ASSETS);
-    })
+    }).catch(err => console.error('SW install error:', err))
   );
 });
 
@@ -26,11 +27,14 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', (event) => {
+  // Only cache GET requests
+  if (event.request.method !== 'GET') return;
+
   event.respondWith(
     fetch(event.request).catch(() => {
       return caches.match(event.request);

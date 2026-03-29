@@ -133,8 +133,12 @@ export default function App() {
   const [childPhase, setChildPhase] = useState<'loading' | 'noconfig' | 'ready' | 'solving' | 'result'>('loading');
   
   const [config, setConfig] = useState<Config>(() => {
-    const saved = localStorage.getItem("app_config");
-    if (saved) return JSON.parse(saved);
+    try {
+      const saved = localStorage.getItem("app_config");
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error("Failed to parse config", e);
+    }
     return {
       grades: [1],
       unitIds: ["1-1-1"],
@@ -145,11 +149,23 @@ export default function App() {
     };
   });
   
-  const [parentPin, setParentPin] = useState(localStorage.getItem("parent_pin") || "1234");
+  const [parentPin, setParentPin] = useState(() => localStorage.getItem("parent_pin") || "1234");
   const [newPin, setNewPin] = useState("");
   const [records, setRecords] = useState<LearningRecord[]>([]);
-  const [stars, setStars] = useState(parseInt(localStorage.getItem("stars") || "0"));
-  const [earnedBadges, setEarnedBadges] = useState<string[]>(JSON.parse(localStorage.getItem("badges") || "[]"));
+  const [stars, setStars] = useState(() => {
+    try {
+      return parseInt(localStorage.getItem("stars") || "0");
+    } catch (e) {
+      return 0;
+    }
+  });
+  const [earnedBadges, setEarnedBadges] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("badges") || "[]");
+    } catch (e) {
+      return [];
+    }
+  });
   
   const [pinOverlay, setPinOverlay] = useState(false);
   const [pinBuffer, setPinBuffer] = useState("");
@@ -205,9 +221,14 @@ export default function App() {
 
   // --- Effects ---
   useEffect(() => {
-    // Load records from localStorage (mocking Firebase for now as per original fallback)
-    const storedRecords = JSON.parse(localStorage.getItem("records") || "{}");
-    setRecords(Object.values(storedRecords).sort((a: any, b: any) => b.ts - a.ts) as LearningRecord[]);
+    try {
+      // Load records from localStorage (mocking Firebase for now as per original fallback)
+      const storedRecords = JSON.parse(localStorage.getItem("records") || "{}");
+      setRecords(Object.values(storedRecords).sort((a: any, b: any) => b.ts - a.ts) as LearningRecord[]);
+    } catch (e) {
+      console.error("Failed to load records", e);
+      setRecords([]);
+    }
 
     // Hide fallback if it exists
     const fallback = document.getElementById('loading-fallback');
