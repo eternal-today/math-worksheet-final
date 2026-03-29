@@ -35,7 +35,9 @@ import {
   Lightbulb,
   Sparkles,
   Sun,
-  Cloud
+  Cloud,
+  Smartphone,
+  Plus
 } from 'lucide-react';
 import { UNITS, BADGES, GRADE_COLORS } from './constants';
 import { makeProblems } from './mathUtils';
@@ -77,46 +79,50 @@ const Toast = ({ message, show }: { message: string, show: boolean }) => (
 );
 
 const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[] }>(({ problems }, ref) => (
-  <div ref={ref} className="print-worksheet hidden print:block bg-white p-8 font-sans text-slate-900">
-    {/* Header Section - More Compact */}
-    <div className="border-2 border-slate-900 p-4 mb-6 flex justify-between items-center">
+  <div ref={ref} className="print-worksheet hidden print:block bg-white p-12 font-sans text-slate-900">
+    {/* Header Section - Professional & Clean */}
+    <div className="flex justify-between items-end border-b-4 border-slate-900 pb-6 mb-10">
       <div>
-        <h1 className="text-2xl font-black tracking-tighter font-display">오늘의 수학 에이스</h1>
-        <div className="flex gap-4 mt-1 text-xs font-bold text-slate-500">
-          <span>날짜: ____년 __월 __일</span>
-          <span>이름: ________</span>
-          <span>걸린 시간: ____분</span>
+        <h1 className="text-4xl font-black tracking-tight font-display mb-2">오늘의 수학 에이스</h1>
+        <div className="flex gap-8 text-sm font-bold text-slate-600">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400">날짜:</span>
+            <span className="border-b border-slate-300 w-40 inline-block text-center">2026년 __월 __일</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400">이름:</span>
+            <span className="border-b border-slate-300 w-32 inline-block"></span>
+          </div>
         </div>
       </div>
-      <div className="w-20 h-20 border-2 border-slate-900 flex flex-col items-center justify-center bg-slate-50">
-        <span className="text-[8px] font-black uppercase tracking-widest mb-1">참 잘했어요</span>
-        <div className="text-2xl font-black text-slate-200">점수</div>
+      <div className="text-right">
+        <div className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-1">Math Ace Learning</div>
+        <div className="w-24 h-24 border-2 border-slate-200 rounded-2xl flex flex-col items-center justify-center bg-slate-50/50">
+          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1">Score</span>
+          <div className="text-3xl font-black text-slate-100">/ {problems.length}</div>
+        </div>
       </div>
     </div>
 
-    {/* Problems Grid - 2 Columns, Tighter Rows */}
-    <div className="grid grid-cols-2 gap-x-10 gap-y-4">
+    {/* Problems Grid - Optimized for 20+ problems */}
+    <div className="grid grid-cols-2 gap-x-16 gap-y-8">
       {problems.map((p, idx) => (
-        <div key={idx} className="flex items-center gap-3 border-b border-slate-100 pb-2">
-          <div className="w-6 h-6 rounded-full border border-slate-900 flex items-center justify-center text-xs font-black shrink-0">
-            {idx + 1}
-          </div>
-          <div className="flex-1 flex items-center justify-between">
-            <span className="text-2xl font-black tracking-tight font-display">
+        <div key={idx} className="flex items-center justify-between border-b-2 border-slate-50 pb-4">
+          <div className="flex items-center gap-6">
+            <span className="text-xl font-black text-slate-200 font-mono w-8">{String(idx + 1).padStart(2, '0')}</span>
+            <span className="text-4xl font-black tracking-tighter font-display text-slate-800">
               {p.expr} ＝
             </span>
-            <div className="w-20 h-10 border border-dashed border-slate-200 rounded-lg flex items-center justify-center text-slate-100 text-[8px] font-bold">
-              정답
-            </div>
           </div>
+          <div className="w-24 h-14 border-2 border-slate-100 rounded-xl bg-slate-50/30"></div>
         </div>
       ))}
     </div>
 
     {/* Footer */}
-    <div className="fixed bottom-6 left-8 right-8 flex justify-between items-center border-t border-slate-100 pt-2 text-[8px] font-bold text-slate-300 uppercase tracking-widest">
-      <span>Math Ace Home Learning System</span>
-      <span>우리집 수학 에이스</span>
+    <div className="fixed bottom-12 left-12 right-12 flex justify-between items-center border-t border-slate-100 pt-6 text-[10px] font-bold text-slate-300 uppercase tracking-[0.3em]">
+      <span>우리집 수학 에이스 - Home Learning System</span>
+      <span>Confidence in Mathematics</span>
     </div>
   </div>
 ));
@@ -624,6 +630,12 @@ export default function App() {
                     </div>
                   </section>
 
+                  <div className="pt-4 pb-4">
+                    <button className="btn-primary w-full py-4 text-lg shadow-xl shadow-brand-100" onClick={() => saveConfig(config)}>
+                      모든 설정 저장하기
+                    </button>
+                  </div>
+
                   {/* Worksheet Print */}
                   <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                     <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
@@ -647,12 +659,6 @@ export default function App() {
                     </button>
                   </section>
 
-                  <div className="pt-4 pb-8">
-                    <button className="btn-primary w-full py-4 text-lg shadow-xl shadow-brand-100" onClick={() => saveConfig(config)}>
-                      모든 설정 저장하기
-                    </button>
-                  </div>
-
                   {/* AI & Security (Low frequency) - Moved to the very bottom */}
                   <div className="pt-12 border-t-2 border-dashed border-slate-200 space-y-6">
                     <div className="flex items-center justify-center gap-2">
@@ -663,19 +669,22 @@ export default function App() {
                     
                     <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 opacity-60 hover:opacity-100 transition-opacity">
                       <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
-                        <Calculator size={18} className="text-slate-400" />
-                        <h3>AI 채점 설정</h3>
+                        <Smartphone size={18} className="text-slate-400" />
+                        <h3>홈 화면에 추가하기</h3>
                       </div>
-                      <div className="space-y-2">
-                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Gemini API Key</label>
-                        <input 
-                          type="password" 
-                          className="input-field bg-slate-50" 
-                          placeholder="AIza..." 
-                          value={config.geminiKey}
-                          onChange={(e) => setConfig({...config, geminiKey: e.target.value})}
-                        />
-                        <p className="text-[10px] text-slate-400">AI 채점 기능을 사용하기 위한 API 키입니다.</p>
+                      <div className="space-y-3">
+                        <p className="text-sm text-slate-500 leading-relaxed">
+                          브라우저 메뉴에서 <strong>'홈 화면에 추가'</strong>를 누르면 앱처럼 아이콘으로 바로 실행할 수 있습니다.
+                        </p>
+                        <div className="flex gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                          <div className="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center text-white shrink-0 shadow-sm">
+                            <Plus size={20} />
+                          </div>
+                          <div className="text-[10px] text-slate-400 leading-tight flex items-center">
+                            아이폰: 공유 버튼 → 홈 화면에 추가<br/>
+                            안드로이드: 메뉴 버튼 → 앱 설치 또는 홈 화면에 추가
+                          </div>
+                        </div>
                       </div>
                     </section>
 
@@ -698,6 +707,24 @@ export default function App() {
                           <button className="btn-secondary px-6" onClick={updatePin}>변경</button>
                         </div>
                         <p className="text-[10px] text-slate-400">부모님 모드 진입 시 사용하는 비밀번호입니다.</p>
+                      </div>
+                    </section>
+
+                    <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 opacity-60 hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
+                        <Calculator size={18} className="text-slate-400" />
+                        <h3>AI 채점 설정</h3>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Gemini API Key</label>
+                        <input 
+                          type="password" 
+                          className="input-field bg-slate-50" 
+                          placeholder="AIza..." 
+                          value={config.geminiKey}
+                          onChange={(e) => setConfig({...config, geminiKey: e.target.value})}
+                        />
+                        <p className="text-[10px] text-slate-400">AI 채점 기능을 사용하기 위한 API 키입니다.</p>
                       </div>
                     </section>
                   </div>
