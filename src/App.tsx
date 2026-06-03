@@ -336,14 +336,45 @@ export default function App() {
     try {
       const unit = UNITS.find(u => u.name === p.unitName);
       const grade = unit?.grade ?? 1;
-      const prompt = `너는 초등학교 ${grade}학년 아이를 가르치는 다정한 선생님이야.
-아이가 "${p.expr}" 문제를 풀고 있어. 정답(${p.ans})은 절대 말하지 마.
-이 문제를 푸는 "첫 번째 행동"을 아주 쉽고 구체적으로 딱 한 가지만 알려줘.
-${grade <= 2 ? '아주 짧고 쉬운 한 문장으로.' : '한두 문장으로 짧게.'} 반말, 이모지 1개. 힌트 문장만 출력해.`;
+
+      // 문제 특성 분석 → Gemini에 풍부한 맥락 제공
+      let situation = "";
+      if ((p.op === "+" || p.op === "-") && p.a !== undefined && p.b !== undefined) {
+        const aOne = p.a % 10, bOne = p.b % 10;
+        if (p.op === "+") {
+          situation = aOne + bOne >= 10
+            ? `일의 자리 ${aOne}+${bOne}=${aOne + bOne}로 10이 넘어서 받아올림이 필요한 문제야. 받아올림을 어떻게 하는지 짚어줘.`
+            : `받아올림이 없는 쉬운 덧셈이야. 너무 뻔한 "일의 자리부터 더해" 같은 말 대신, 아이가 자신감을 갖도록 격려하면서 자릿값을 떠올리게 해줘.`;
+        } else {
+          situation = aOne < bOne
+            ? `일의 자리 ${aOne}에서 ${bOne}을 뺄 수 없어서 받아내림(십의 자리에서 빌려오기)이 필요한 문제야. 빌려오는 과정을 짚어줘.`
+            : `받아내림이 없는 쉬운 뺄셈이야. 뻔한 말 대신 아이가 자신있게 자리별로 빼보도록 격려해줘.`;
+        }
+      } else if (p.op === "×") {
+        situation = `곱셈 문제야. 구구단을 떠올리거나, 모르면 그 수를 여러 번 더하는 방법을 알려줘.`;
+      } else if (p.op === "÷") {
+        situation = `나눗셈 문제야. 곱셈을 거꾸로 생각하거나 똑같이 나눠담는 그림을 떠올리게 해줘.`;
+      } else if (p.expr.includes("/")) {
+        situation = `분수 문제야. 분모가 같은지 보고, 분자끼리 계산하는 원리를 짚어줘.`;
+      } else {
+        situation = `차근차근 단계별로 생각하도록 도와줘.`;
+      }
+
+      const prompt = `너는 초등학교 ${grade}학년 아이를 가르치는 다정하고 똑똑한 선생님이야.
+아이가 "${p.expr} = ?" 문제를 풀다가 힌트 버튼을 눌렀어.
+
+[이 문제의 특징] ${situation}
+
+규칙:
+- 정답(${p.ans})은 절대 직접 말하지 마.
+- "일의 자리부터 더해봐" 같은 누구나 아는 뻔한 말은 하지 마. 이 문제에만 해당하는 구체적인 도움을 줘.
+- 실제 숫자를 활용해서 설명해줘 (예: "30하고 30을 먼저 더하면?").
+- ${grade <= 2 ? '아주 쉬운 말로 한 문장.' : '한두 문장으로 짧게.'}
+- 반말, 친근하게, 이모지 1개. 힌트 문장만 출력해.`;
+
       const text = await callGemini({ apiKey: config.geminiKey, prompt });
       setHint(text && text.trim() ? text.trim() : localHint(p.expr, p.op, p.a, p.b));
     } catch (err) {
-      // 실패하면 규칙 힌트로 대체
       setHint(localHint(p.expr, p.op, p.a, p.b));
     } finally {
       setIsHintLoading(false);
