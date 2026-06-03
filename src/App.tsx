@@ -41,7 +41,7 @@ import {
 import { UNITS, BADGES, GRADE_COLORS } from './constants';
 import { makeProblems } from './mathUtils';
 import { MathProblem, LearningRecord } from './types';
-import { callGemini, safeParseJSON } from './geminiUtils';
+import { callGemini, safeParseJSON, localHint } from './geminiUtils';
 import { motion, AnimatePresence } from 'motion/react';
 
 // --- Types ---
@@ -181,12 +181,22 @@ export default function App() {
   const [feedbackIcon, setFeedbackIcon] = useState<'check' | 'x' | null>(null);
   const [charFeedback, setCharFeedback] = useState("");
   const [hint, setHint] = useState("");
-  const [hintError, setHintError] = useState(false);
   const [sessionGoal, setSessionGoal] = useState("");
   const [finalFeedback, setFinalFeedback] = useState("");
   const [isFinalFeedbackLoading, setIsFinalFeedbackLoading] = useState(false);
   const [isGrading, setIsGrading] = useState(false);
   const [isHintLoading, setIsHintLoading] = useState(false);
+  // 오류 복구용 플래그
+  const [hintError, setHintError] = useState(false);
+  const [gradingError, setGradingError] = useState(false);
+  const [feedbackError, setFeedbackError] = useState(false);
+  // 종이 채점: 인쇄한 문제를 따로 보관 (화면 풀이 problems와 분리)
+  const [printedProblems, setPrintedProblems] = useState<MathProblem[]>([]);
+  // 마지막 업로드 이미지 (채점 재시도용)
+  const lastImageRef = useRef<{ base64: string; mime: string } | null>(null);
+  // 동기부여: 연속 정답 콤보
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
 
   const toggleCorrection = (idx: number) => {
     const newAnswers = [...answers];
@@ -293,6 +303,8 @@ export default function App() {
     setHint("");
     setHintError(false);
     setSessionGoal("");
+    setCombo(0);
+    setMaxCombo(0);
 
     // AI Goal Setting
     if (config.geminiKey) {
@@ -308,26 +320,25 @@ export default function App() {
   };
 
   const getHint = async () => {
-    if (!config.geminiKey || isHintLoading || isAnsDisabled) return;
-    setIsHintLoading(true);
+    if (isHintLoading || isAnsDisabled) return;
+    const p = problems[curIdx];
+    // 1차: 규칙 기반 힌트 즉시 (LLM 없이도 항상 동작)
+    setHint(localHint(p.expr, p.op, p.a, p.b));
     setHintError(false);
+    if (!config.geminiKey) return;
+    // 2차: Gemini 보강 (실패해도 규칙 힌트 유지)
+    setIsHintLoading(true);
     try {
-      const p = problems[curIdx];
-      // 해당 문제 단원의 학년을 찾아 눈높이를 맞춘다
       const unit = UNITS.find(u => u.name === p.unitName);
       const grade = unit?.grade ?? 1;
       const prompt = `너는 초등학교 ${grade}학년 아이를 가르치는 다정한 선생님이야.
-아이가 "${p.expr}" 문제를 풀고 있어.
-정답(${p.ans})은 절대 말하지 말고, 첫 번째로 무엇을 하면 되는지 아주 쉽고 구체적으로 딱 한 가지만 알려줘.
-예를 들어 덧셈이면 "먼저 일의 자리 숫자끼리 더해볼까?" 처럼 행동을 콕 집어줘.
-${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문장으로 짧게.'}
-반말로, 이모지 1개만 넣어서 친근하게.`;
+아이가 "${p.expr}" 문제를 풀고 있어. 정답(${p.ans})은 절대 말하지 마.
+이 문제를 푸는 "첫 번째 행동"을 아주 쉽고 구체적으로 딱 한 가지만 알려줘.
+${grade <= 2 ? '아주 짧고 쉬운 한 문장으로.' : '한두 문장으로 짧게.'} 반말, 이모지 1개. 힌트 문장만 출력해.`;
       const text = await callGemini({ apiKey: config.geminiKey, prompt });
-      setHint(text.trim());
+      if (text && text.trim()) setHint(text.trim());
     } catch (err) {
-      // 실패를 명확히 표시 → "다시 받기" 버튼 노출
-      setHint("");
-      setHintError(true);
+      // 규칙 힌트가 남아있으므로 조용히 유지
     } finally {
       setIsHintLoading(false);
     }
@@ -344,8 +355,20 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
     const newAnswers = [...answers, { val: ansInput, ok }];
     setAnswers(newAnswers);
 
-    // AI Feedback
-    setCharFeedback(ok ? "우와아! 정답이야! 🌟" : "아까비! 괜찮아, 할 수 있어! 🔥");
+    // 콤보 업데이트
+    const newCombo = ok ? combo + 1 : 0;
+    setCombo(newCombo);
+    if (newCombo > maxCombo) setMaxCombo(newCombo);
+
+    // 캐릭터 피드백 — 콤보에 따라 더 신나게
+    if (ok) {
+      const comboMsg = newCombo >= 5 ? `${newCombo}연속 정답! 불타오른다! 🔥🔥`
+                     : newCombo >= 3 ? `${newCombo}연속! 대단해! ⚡`
+                     : "우와아! 정답이야! 🌟";
+      setCharFeedback(comboMsg);
+    } else {
+      setCharFeedback("아까비! 괜찮아, 할 수 있어! 💪");
+    }
 
     setTimeout(() => {
       if (curIdx + 1 >= problems.length) {
@@ -362,7 +385,8 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
     }, ok ? 1200 : 1500);
   };
 
-  const finishSolving = async (finalAnswers: {val: string, ok: boolean}[], aiFeedback?: string) => {
+  const finishSolving = async (finalAnswers: {val: string, ok: boolean}[], aiFeedback?: string, gradingTarget?: MathProblem[]) => {
+    const srcProblems = gradingTarget && gradingTarget.length ? gradingTarget : problems;
     const correct = finalAnswers.filter(a => a.ok).length;
     const total = finalAnswers.length;
     const newRecord: LearningRecord = {
@@ -370,9 +394,9 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
       correct,
       total,
       ts: Date.now(),
-      unitNames: Array.from(new Set(problems.map(p => p.unitName))),
-      wrongExprs: problems.filter((_, i) => !finalAnswers[i].ok).map(p => p.expr),
-      problems: [...problems],
+      unitNames: Array.from(new Set(srcProblems.map(p => p.unitName))),
+      wrongExprs: srcProblems.filter((_, i) => !finalAnswers[i]?.ok).map(p => p.expr),
+      problems: [...srcProblems],
       answers: [...finalAnswers]
     };
 
@@ -400,6 +424,7 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
       setFinalFeedback(aiFeedback);
     } else if (config.geminiKey) {
       setIsFinalFeedbackLoading(true);
+      setFeedbackError(false);
       try {
         const prompt = `아이의 오늘 수학 학습 결과야. 총 ${total}문제 중 ${correct}문제를 맞혔어. 아이의 눈높이에 맞춰서 아주 따뜻하고 신나는 칭찬과 격려의 한마디를 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1~2문장)`;
         const text = await callGemini({ apiKey: config.geminiKey, prompt });
@@ -412,42 +437,67 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
     }
   };
 
+  // 종이 채점 대상 문제: 인쇄한 문제(printedProblems)가 있으면 그것, 없으면 화면 문제
+  const getGradingTarget = (): MathProblem[] => {
+    if (printedProblems.length > 0) return printedProblems;
+    if (problems.length > 0) return problems;
+    return [];
+  };
+
+  const runGrading = async (base64: string, mime: string) => {
+    const target = getGradingTarget();
+    if (target.length === 0) {
+      showToast("먼저 문제를 인쇄하거나 화면에서 풀어주세요!");
+      return;
+    }
+    if (!config.geminiKey) {
+      showToast("AI 채점은 부모님 설정에서 API 키 등록 후 사용할 수 있어요.");
+      return;
+    }
+    setIsGrading(true);
+    setGradingError(false);
+    lastImageRef.current = { base64, mime };
+    try {
+      const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${target.map((p, i) => `${i+1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로만 줘 (다른 말 없이): { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 아주 따뜻하고 신나는 전체 피드백 (반말, 이모지 듬뿍)" }`;
+      const text = await callGemini({
+        apiKey: config.geminiKey, prompt,
+        imageBase64: base64, imageMime: mime,
+        jsonMode: true, thinkingBudget: 512,
+      });
+      const data = safeParseJSON<{ corrections: { ok: boolean; userVal: string }[]; feedback: string }>(text);
+      if (!data || !Array.isArray(data.corrections) || data.corrections.length === 0) {
+        throw new Error("채점 결과를 읽지 못했습니다.");
+      }
+      const gradedAnswers = target.map((_, i) => {
+        const cc = data.corrections[i];
+        return cc ? { val: String(cc.userVal ?? ""), ok: !!cc.ok } : { val: "", ok: false };
+      });
+      // 채점은 인쇄 문제 기준이므로 problems도 맞춰줌
+      setProblems(target);
+      setAnswers(gradedAnswers);
+      finishSolving(gradedAnswers, data.feedback, target);
+    } catch (err) {
+      setGradingError(true);
+      showToast("채점에 실패했어요. 다시 시도하거나 더 밝게 찍어주세요.");
+    } finally {
+      setIsGrading(false);
+    }
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !config.geminiKey) return;
-    
-    setIsGrading(true);
+    if (!file) return;
     const reader = new FileReader();
-    reader.onloadend = async () => {
+    reader.onloadend = () => {
       const base64 = (reader.result as string).split(',')[1];
-      try {
-        const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${problems.map((p, i) => `${i+1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로만 줘 (다른 말 없이): { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 아주 따뜻하고 신나는 전체 피드백 (반말, 이모지 듬뿍)" }`;
-        const text = await callGemini({
-          apiKey: config.geminiKey,
-          prompt,
-          imageBase64: base64,
-          imageMime: file.type || "image/jpeg",
-          jsonMode: true,
-          thinkingBudget: 512,
-        });
-        const data = safeParseJSON<{ corrections: { ok: boolean; userVal: string }[]; feedback: string }>(text);
-        if (!data || !Array.isArray(data.corrections) || data.corrections.length === 0) {
-          throw new Error("채점 결과를 읽지 못했습니다.");
-        }
-        // 문제 수와 채점 결과 수가 다를 경우 보정
-        const gradedAnswers = problems.map((_, i) => {
-          const c = data.corrections[i];
-          return c ? { val: String(c.userVal ?? ""), ok: !!c.ok } : { val: "", ok: false };
-        });
-        setAnswers(gradedAnswers);
-        finishSolving(gradedAnswers, data.feedback);
-      } catch (err) {
-        showToast("채점에 실패했어요. 사진을 더 밝고 또렷하게 찍어 다시 시도해 주세요.");
-      } finally {
-        setIsGrading(false);
-      }
+      runGrading(base64, file.type || "image/jpeg");
     };
     reader.readAsDataURL(file);
+    e.target.value = ""; // 같은 파일 재선택 가능하게
+  };
+
+  const retryGrading = () => {
+    if (lastImageRef.current) runGrading(lastImageRef.current.base64, lastImageRef.current.mime);
   };
 
   return (
@@ -730,6 +780,7 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
                       }
                       const p = makeProblems(config.unitIds, config.difficulty, config.count);
                       setProblems(p);
+                      setPrintedProblems(p); // 종이 채점용으로 보관
                       setTimeout(() => handlePrint(), 100);
                     }}>
                       <Printer size={18} />
@@ -991,7 +1042,7 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
                           <div className="text-xl font-black text-slate-900 mb-1">종이 학습지 채점</div>
                           <div className="text-slate-400 text-sm">풀어놓은 학습지를 찍어주세요</div>
                         </div>
-                        <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageUpload} />
                       </label>
                       {isGrading && (
                         <div className="absolute inset-0 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center rounded-[2rem] z-10">
@@ -1000,6 +1051,22 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
                         </div>
                       )}
                     </div>
+
+                    {/* 채점 대상 안내 + 오류 시 재시도 */}
+                    {printedProblems.length > 0 && !isGrading && (
+                      <div className="text-center text-xs text-emerald-600 font-bold bg-emerald-50 py-2 px-3 rounded-xl">
+                        📄 인쇄한 {printedProblems.length}문제를 채점할 준비가 됐어요
+                      </div>
+                    )}
+                    {gradingError && !isGrading && (
+                      <button
+                        onClick={retryGrading}
+                        className="w-full flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-2xl transition-colors active:scale-[0.98]"
+                      >
+                        <RotateCcw size={18} />
+                        채점 다시 시도하기
+                      </button>
+                    )}
                   </div>
 
                   <div className="flex justify-center gap-4">
@@ -1022,15 +1089,28 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
                   animate={{ scale: 1, opacity: 1 }}
                   className="w-full space-y-6"
                 >
-                  <div className="flex justify-between items-center px-2">
-                    <div className="bg-slate-200 h-2 flex-1 rounded-full overflow-hidden mr-4">
+                  <div className="flex justify-between items-center px-2 gap-3">
+                    <div className="bg-slate-200 h-2.5 flex-1 rounded-full overflow-hidden">
                       <motion.div 
-                        className="bg-brand-500 h-full"
+                        className="bg-gradient-to-r from-brand-500 to-brand-400 h-full rounded-full"
                         initial={{ width: 0 }}
                         animate={{ width: `${((curIdx + 1) / problems.length) * 100}%` }}
                       />
                     </div>
-                    <span className="text-xs font-black text-slate-400 font-mono">{curIdx + 1} / {problems.length}</span>
+                    <AnimatePresence>
+                      {combo >= 2 && (
+                        <motion.span
+                          key={combo}
+                          initial={{ scale: 0.5, opacity: 0 }}
+                          animate={{ scale: 1, opacity: 1 }}
+                          exit={{ opacity: 0 }}
+                          className="shrink-0 flex items-center gap-1 bg-orange-100 text-orange-600 font-black text-xs px-2.5 py-1 rounded-full"
+                        >
+                          <Flame size={12} /> {combo}연속
+                        </motion.span>
+                      )}
+                    </AnimatePresence>
+                    <span className="shrink-0 text-xs font-black text-slate-400 font-mono">{curIdx + 1} / {problems.length}</span>
                   </div>
 
                   <div className="bg-white rounded-[2.5rem] p-12 shadow-2xl shadow-slate-200/50 border border-slate-100 text-center relative overflow-hidden">
@@ -1091,27 +1171,10 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
                           <motion.div 
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
-                            className="p-4 bg-amber-50 rounded-2xl text-amber-700 font-bold text-sm border border-amber-100"
+                            className="p-4 bg-amber-50 rounded-2xl text-amber-700 font-bold text-sm border border-amber-100 flex items-start gap-2"
                           >
-                            💡 {hint}
-                          </motion.div>
-                        )}
-
-                        {hintError && !isAnsDisabled && (
-                          <motion.div 
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: 'auto' }}
-                            className="p-4 bg-red-50 rounded-2xl border border-red-100 flex items-center justify-between gap-3"
-                          >
-                            <span className="text-red-600 font-bold text-sm">힌트를 못 받아왔어요 😢</span>
-                            <button
-                              onClick={getHint}
-                              disabled={isHintLoading}
-                              className="shrink-0 flex items-center gap-1.5 bg-red-500 hover:bg-red-600 text-white text-sm font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-50"
-                            >
-                              {isHintLoading ? <Loader2 className="animate-spin" size={16} /> : <RotateCcw size={16} />}
-                              다시 받기
-                            </button>
+                            <span className="flex-1">💡 {hint}</span>
+                            {isHintLoading && <Loader2 className="animate-spin shrink-0 mt-0.5" size={16} />}
                           </motion.div>
                         )}
                       </motion.div>
@@ -1160,28 +1223,46 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
                   className="w-full text-center space-y-8"
                 >
                   <div className="bg-white rounded-[3rem] p-12 shadow-2xl shadow-slate-200/50 border border-slate-100 space-y-6">
-                    <div className="w-24 h-24 bg-brand-100 rounded-full mx-auto flex items-center justify-center">
-                      <Trophy size={48} className="text-brand-600" />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <h2 className="text-3xl font-black text-slate-900 font-display">정말 대단해!</h2>
-                      <p className="text-slate-500 font-medium">오늘의 학습을 모두 마쳤어.</p>
-                    </div>
-
-                        <div className="grid grid-cols-2 gap-4 py-6">
-                          <div className="bg-slate-50 p-6 rounded-3xl">
-                            <div className="text-3xl font-black text-brand-600 font-display">
-                              {answers.filter(a => a.ok).length} <span className="text-sm text-slate-400">/ {problems.length}</span>
-                            </div>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">CORRECT</div>
+                    {(() => {
+                      const correctN = answers.filter(a => a.ok).length;
+                      const pct = problems.length ? Math.round(correctN / problems.length * 100) : 0;
+                      const cfg = pct >= 90 ? { emoji: "🏆", msg: "완벽해요!", sub: "오늘의 학습을 멋지게 끝냈어!", color: "bg-amber-100 text-amber-600" }
+                              : pct >= 70 ? { emoji: "🌟", msg: "잘했어요!", sub: "정말 열심히 풀었구나!", color: "bg-brand-100 text-brand-600" }
+                              : pct >= 50 ? { emoji: "💪", msg: "조금만 더!", sub: "틀린 문제만 다시 풀어볼까?", color: "bg-orange-100 text-orange-600" }
+                              : { emoji: "📚", msg: "다시 도전!", sub: "천천히 다시 해보면 잘할 수 있어!", color: "bg-rose-100 text-rose-600" };
+                      return (
+                        <>
+                          <div className={`w-24 h-24 rounded-full mx-auto flex items-center justify-center text-5xl ${cfg.color}`}>
+                            {cfg.emoji}
                           </div>
-                          <div className="bg-slate-50 p-6 rounded-3xl">
-                            <div className="text-3xl font-black text-amber-500 font-display flex items-center justify-center gap-1">
-                              <Star size={24} className="fill-amber-500" />
+                          <div className="space-y-2">
+                            <h2 className="text-3xl font-black text-slate-900 font-display">{cfg.msg}</h2>
+                            <p className="text-slate-500 font-medium">{cfg.sub}</p>
+                          </div>
+                        </>
+                      );
+                    })()}
+
+                        <div className="grid grid-cols-3 gap-3 py-6">
+                          <div className="bg-slate-50 p-5 rounded-3xl">
+                            <div className="text-2xl font-black text-brand-600 font-display">
+                              {answers.filter(a => a.ok).length}<span className="text-xs text-slate-400">/{problems.length}</span>
+                            </div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">정답</div>
+                          </div>
+                          <div className="bg-slate-50 p-5 rounded-3xl">
+                            <div className="text-2xl font-black text-amber-500 font-display flex items-center justify-center gap-1">
+                              <Star size={20} className="fill-amber-500" />
                               {Math.floor(answers.filter(a => a.ok).length / 5)}
                             </div>
-                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">EARNED</div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">별 획득</div>
+                          </div>
+                          <div className="bg-slate-50 p-5 rounded-3xl">
+                            <div className="text-2xl font-black text-orange-500 font-display flex items-center justify-center gap-1">
+                              <Flame size={20} />
+                              {maxCombo}
+                            </div>
+                            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">최고 콤보</div>
                           </div>
                         </div>
 
@@ -1235,13 +1316,22 @@ ${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문
                         </AnimatePresence>
                   </div>
 
-                  <button 
-                    className="btn-secondary w-full py-6 text-xl flex items-center justify-center gap-3"
-                    onClick={() => setChildPhase('ready')}
-                  >
-                    <RotateCcw size={24} />
-                    <span>다시 하기</span>
-                  </button>
+                  <div className="flex gap-3 w-full">
+                    <button 
+                      className="btn-primary flex-1 py-6 text-xl flex items-center justify-center gap-2"
+                      onClick={startSolving}
+                    >
+                      <RotateCcw size={22} />
+                      <span>다시 풀기</span>
+                    </button>
+                    <button 
+                      className="btn-secondary flex-1 py-6 text-xl flex items-center justify-center gap-2"
+                      onClick={() => setChildPhase('ready')}
+                    >
+                      <Home size={22} />
+                      <span>홈으로</span>
+                    </button>
+                  </div>
                 </motion.div>
               )}
             </main>
