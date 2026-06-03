@@ -322,11 +322,16 @@ export default function App() {
   const getHint = async () => {
     if (isHintLoading || isAnsDisabled) return;
     const p = problems[curIdx];
-    // 1차: 규칙 기반 힌트 즉시 (LLM 없이도 항상 동작)
-    setHint(localHint(p.expr, p.op, p.a, p.b));
     setHintError(false);
-    if (!config.geminiKey) return;
-    // 2차: Gemini 보강 (실패해도 규칙 힌트 유지)
+
+    // Gemini 키가 없으면 규칙 힌트만 즉시 표시
+    if (!config.geminiKey) {
+      setHint(localHint(p.expr, p.op, p.a, p.b));
+      return;
+    }
+
+    // Gemini를 먼저 기다렸다가 한 번만 표시 (깜빡임 없음). 실패 시 규칙 힌트로 대체.
+    setHint("");
     setIsHintLoading(true);
     try {
       const unit = UNITS.find(u => u.name === p.unitName);
@@ -336,9 +341,10 @@ export default function App() {
 이 문제를 푸는 "첫 번째 행동"을 아주 쉽고 구체적으로 딱 한 가지만 알려줘.
 ${grade <= 2 ? '아주 짧고 쉬운 한 문장으로.' : '한두 문장으로 짧게.'} 반말, 이모지 1개. 힌트 문장만 출력해.`;
       const text = await callGemini({ apiKey: config.geminiKey, prompt });
-      if (text && text.trim()) setHint(text.trim());
+      setHint(text && text.trim() ? text.trim() : localHint(p.expr, p.op, p.a, p.b));
     } catch (err) {
-      // 규칙 힌트가 남아있으므로 조용히 유지
+      // 실패하면 규칙 힌트로 대체
+      setHint(localHint(p.expr, p.op, p.a, p.b));
     } finally {
       setIsHintLoading(false);
     }
@@ -1134,47 +1140,56 @@ ${grade <= 2 ? '아주 짧고 쉬운 한 문장으로.' : '한두 문장으로 �
                           </motion.div>
                         )}
 
-                        <div className="text-7xl font-black text-slate-900 font-display tracking-tighter">
-                          {problems[curIdx].expr} <span className="text-brand-500">＝</span>
+                        <div className={`flex items-center justify-center gap-3 ${config.style === 'horizontal' ? 'flex-row flex-wrap' : 'flex-col'}`}>
+                          <div className="text-5xl sm:text-6xl font-black text-slate-900 font-display tracking-tighter whitespace-nowrap">
+                            {problems[curIdx].expr} <span className="text-brand-500">＝</span>
+                          </div>
+
+                          <div className="relative w-[140px] sm:w-[160px]">
+                            <input 
+                              autoFocus
+                              inputMode="decimal"
+                              className={`w-full text-center text-5xl sm:text-6xl font-black font-display bg-slate-50 border-b-4 py-3 outline-none transition-all ${
+                                isAnsDisabled 
+                                  ? (answers[curIdx]?.ok ? 'border-emerald-500 text-emerald-600 bg-emerald-50' : 'border-rose-500 text-rose-600 bg-rose-50') 
+                                  : 'border-slate-200 focus:border-brand-500 text-slate-900'
+                              }`}
+                              value={ansInput}
+                              onChange={(e) => setAnsInput(e.target.value)}
+                              disabled={isAnsDisabled}
+                              placeholder="?"
+                              onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
+                            />
+                            {isAnsDisabled && (
+                              <motion.div 
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                className="absolute -right-10 top-1/2 -translate-y-1/2"
+                              >
+                                {answers[curIdx]?.ok ? (
+                                  <CheckCircle2 size={36} className="text-emerald-500" />
+                                ) : (
+                                  <XCircle size={36} className="text-rose-500" />
+                                )}
+                              </motion.div>
+                            )}
+                          </div>
                         </div>
 
-                        <div className="relative max-w-[200px] mx-auto">
-                          <input 
-                            autoFocus
-                            className={`w-full text-center text-6xl font-black font-display bg-slate-50 border-b-4 py-4 outline-none transition-all ${
-                              isAnsDisabled 
-                                ? (answers[curIdx]?.ok ? 'border-emerald-500 text-emerald-600 bg-emerald-50' : 'border-rose-500 text-rose-600 bg-rose-50') 
-                                : 'border-slate-200 focus:border-brand-500 text-slate-900'
-                            }`}
-                            value={ansInput}
-                            onChange={(e) => setAnsInput(e.target.value)}
-                            disabled={isAnsDisabled}
-                            placeholder="?"
-                            onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
-                          />
-                          {isAnsDisabled && (
-                            <motion.div 
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              className="absolute -right-12 top-1/2 -translate-y-1/2"
-                            >
-                              {answers[curIdx]?.ok ? (
-                                <CheckCircle2 size={40} className="text-emerald-500" />
-                              ) : (
-                                <XCircle size={40} className="text-rose-500" />
-                              )}
-                            </motion.div>
-                          )}
-                        </div>
-
-                        {hint && !isAnsDisabled && (
+                        {(hint || isHintLoading) && !isAnsDisabled && (
                           <motion.div 
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
-                            className="p-4 bg-amber-50 rounded-2xl text-amber-700 font-bold text-sm border border-amber-100 flex items-start gap-2"
+                            className="p-4 bg-amber-50 rounded-2xl text-amber-700 font-bold text-sm border border-amber-100 flex items-center gap-2"
                           >
-                            <span className="flex-1">💡 {hint}</span>
-                            {isHintLoading && <Loader2 className="animate-spin shrink-0 mt-0.5" size={16} />}
+                            {isHintLoading ? (
+                              <>
+                                <Loader2 className="animate-spin shrink-0" size={16} />
+                                <span>힌트를 준비하고 있어요...</span>
+                              </>
+                            ) : (
+                              <span className="flex-1">💡 {hint}</span>
+                            )}
                           </motion.div>
                         )}
                       </motion.div>
