@@ -58,21 +58,24 @@ export function safeParseJSON<T = any>(text: string): T | null {
   return null;
 }
 
-/** 규칙 기반 힌트 — LLM 없이 즉시. 연산별 첫 풀이 단계를 콕 집어준다. */
+/** 규칙 기반 힌트 — LLM 없이 즉시. 답 직전까지 풀이를 보여주되 마지막은 아이 몫으로. */
 export function localHint(expr: string, op: string, a?: number, b?: number): string {
   if (op === "-" && a !== undefined && b !== undefined) {
-    const aOne = a % 10, bOne = b % 10;
-    if (aOne < bOne) return `일의 자리 ${aOne}에서 ${bOne}을 뺄 수 없어요. 십의 자리에서 10을 빌려와 ${aOne + 10}−${bOne}=${aOne + 10 - bOne}부터 구해봐요! ✏️`;
-    return `일의 자리부터: ${aOne}−${bOne}=${aOne - bOne}. 그다음 십의 자리를 빼면 돼요 👍`;
+    const bTen = Math.floor(b / 10) * 10, bOne = b % 10;
+    if (bOne === 0 && bTen > 0) return `${b}은 딱 몇십이야. ${a}에서 십의 자리만 ${Math.floor(a/10)}−${bTen/10}만큼 줄이면 얼마일까? 👍`;
+    if ((a % 10) < bOne) return `${a}에서 먼저 ${bTen}을 빼면 ${a - bTen}, 거기서 ${bOne}을 더 빼면? 직접 해볼래? ✏️`;
+    if (bTen > 0) return `${a}에서 ${bTen}을 빼면 ${a - bTen}이야. 거기서 ${bOne}을 빼면 얼마일까? 👍`;
+    return `${a}에서 ${bOne}을 빼면 몇이 될까? 손가락으로 세어봐도 좋아 👍`;
   }
   if (op === "+" && a !== undefined && b !== undefined) {
-    const aOne = a % 10, bOne = b % 10;
-    if (aOne + bOne >= 10) return `일의 자리 ${aOne}+${bOne}=${aOne + bOne}, 10이 넘으니 1을 십의 자리로 올려줘요! ✏️`;
-    return `일의 자리부터 더해봐요: ${aOne}+${bOne}=${aOne + bOne} 👍`;
+    const aTen = Math.floor(a / 10) * 10, aOne = a % 10;
+    const bTen = Math.floor(b / 10) * 10, bOne = b % 10;
+    if (aTen + bTen > 0) return `십끼리 더하면 ${aTen + bTen}, 일끼리는 ${aOne}+${bOne}이야. 둘을 합치면 얼마일까? ✏️`;
+    return `${aOne}하고 ${bOne}을 더하면 몇이 될까? 직접 세어봐! 👍`;
   }
-  if (op === "×" && a !== undefined && b !== undefined) return `${a}을 ${b}번 더하는 것과 같아요. 구구단 ${b}단을 떠올려봐요! ✏️`;
-  if (op === "÷" && a !== undefined && b !== undefined) return `${a} 안에 ${b}이 몇 번 들어가는지 생각해봐요. ${b}단 구구단을 거꾸로! 👍`;
-  if (expr.includes("/")) return `분모(아래 숫자)가 같으면 분자(위 숫자)끼리만 계산하면 돼요 ✏️`;
-  if (expr.includes(":")) return `두 수를 같은 수로 나눠서 더 작게 만들어봐요 👍`;
-  return `천천히 한 자리씩 차근차근 계산해봐요! 💪`;
+  if (op === "×" && a !== undefined && b !== undefined) return `${a}을 ${b}번 더하는 거야. 구구단 ${b}단을 떠올려서 직접 말해볼래? ✏️`;
+  if (op === "÷" && a !== undefined && b !== undefined) return `${b} 곱하기 얼마가 ${a}이 될까? 거꾸로 생각해봐! 👍`;
+  if (expr.includes("/")) return `분모가 같으니 분자끼리만 계산하면 돼. 직접 해볼래? ✏️`;
+  if (expr.includes(":")) return `두 수를 같은 수로 나눠서 더 작게 만들어봐 👍`;
+  return `차근차근 한 단계씩 풀어볼까? 💪`;
 }
