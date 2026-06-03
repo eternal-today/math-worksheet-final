@@ -5,7 +5,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useReactToPrint } from 'react-to-print';
-import { GoogleGenAI } from "@google/genai";
 import { 
   Calculator, 
   Settings, 
@@ -42,6 +41,7 @@ import {
 import { UNITS, BADGES, GRADE_COLORS } from './constants';
 import { makeProblems } from './mathUtils';
 import { MathProblem, LearningRecord } from './types';
+import { callGemini, safeParseJSON } from './geminiUtils';
 import { motion, AnimatePresence } from 'motion/react';
 
 // --- Types ---
@@ -181,6 +181,7 @@ export default function App() {
   const [feedbackIcon, setFeedbackIcon] = useState<'check' | 'x' | null>(null);
   const [charFeedback, setCharFeedback] = useState("");
   const [hint, setHint] = useState("");
+  const [hintError, setHintError] = useState(false);
   const [sessionGoal, setSessionGoal] = useState("");
   const [finalFeedback, setFinalFeedback] = useState("");
   const [isFinalFeedbackLoading, setIsFinalFeedbackLoading] = useState(false);
@@ -290,16 +291,16 @@ export default function App() {
     setFeedbackIcon(null);
     setCharFeedback("");
     setHint("");
+    setHintError(false);
     setSessionGoal("");
 
     // AI Goal Setting
     if (config.geminiKey) {
       try {
-        const ai = new GoogleGenAI({ apiKey: config.geminiKey });
         const unitNames = Array.from(new Set(newProblems.map(p => p.unitName)));
-        const prompt = `오늘 풀 문제는 ${unitNames.join(", ")} 단원이야. 아이가 즐겁게 시작할 수 있도록 아주 짧고 신나는 목표 한마디 해줘! (반말, 이모지 듬뿍, 칭찬 가득)`;
-        const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
-        setSessionGoal(res.text);
+        const prompt = `오늘 풀 문제는 ${unitNames.join(", ")} 단원이야. 아이가 즐겁게 시작할 수 있도록 아주 짧고 신나는 목표 한마디 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1문장)`;
+        const text = await callGemini({ apiKey: config.geminiKey, prompt });
+        setSessionGoal(text.trim());
       } catch (err) {
         setSessionGoal("오늘도 즐겁게 수학이랑 놀아보자! 화이팅! 🚀");
       }
@@ -309,14 +310,24 @@ export default function App() {
   const getHint = async () => {
     if (!config.geminiKey || isHintLoading || isAnsDisabled) return;
     setIsHintLoading(true);
+    setHintError(false);
     try {
-      const ai = new GoogleGenAI({ apiKey: config.geminiKey });
       const p = problems[curIdx];
-      const prompt = `문제: ${p.expr}. 이 문제를 풀고 있는 아이에게 아주 친절하고 쉬운 힌트 하나만 줘. 정답을 직접 말하지 말고 원리를 깨닫게 도와줘. (반말, 이모지 사용, 아주 짧게)`;
-      const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
-      setHint(res.text);
+      // 해당 문제 단원의 학년을 찾아 눈높이를 맞춘다
+      const unit = UNITS.find(u => u.name === p.unitName);
+      const grade = unit?.grade ?? 1;
+      const prompt = `너는 초등학교 ${grade}학년 아이를 가르치는 다정한 선생님이야.
+아이가 "${p.expr}" 문제를 풀고 있어.
+정답(${p.ans})은 절대 말하지 말고, 첫 번째로 무엇을 하면 되는지 아주 쉽고 구체적으로 딱 한 가지만 알려줘.
+예를 들어 덧셈이면 "먼저 일의 자리 숫자끼리 더해볼까?" 처럼 행동을 콕 집어줘.
+${grade <= 2 ? '아주 짧고 쉬운 말로, 한 문장으로만.' : '한두 문장으로 짧게.'}
+반말로, 이모지 1개만 넣어서 친근하게.`;
+      const text = await callGemini({ apiKey: config.geminiKey, prompt });
+      setHint(text.trim());
     } catch (err) {
-      setHint("천천히 다시 생각해보면 할 수 있어! 💪");
+      // 실패를 명확히 표시 → "다시 받기" 버튼 노출
+      setHint("");
+      setHintError(true);
     } finally {
       setIsHintLoading(false);
     }
@@ -346,6 +357,7 @@ export default function App() {
         setFeedbackIcon(null);
         setCharFeedback("");
         setHint("");
+        setHintError(false);
       }
     }, ok ? 1200 : 1500);
   };
@@ -389,10 +401,9 @@ export default function App() {
     } else if (config.geminiKey) {
       setIsFinalFeedbackLoading(true);
       try {
-        const ai = new GoogleGenAI({ apiKey: config.geminiKey });
-        const prompt = `아이의 오늘 수학 학습 결과야. 총 ${total}문제 중 ${correct}문제를 맞혔어. 아이의 눈높이에 맞춰서 아주 따뜻하고 신나는 칭찬과 격려의 한마디를 해줘! (반말, 이모지 듬뿍, 칭찬 가득)`;
-        const res = await ai.models.generateContent({ model: "gemini-3-flash-preview", contents: [{ parts: [{ text: prompt }] }] });
-        setFinalFeedback(res.text);
+        const prompt = `아이의 오늘 수학 학습 결과야. 총 ${total}문제 중 ${correct}문제를 맞혔어. 아이의 눈높이에 맞춰서 아주 따뜻하고 신나는 칭찬과 격려의 한마디를 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1~2문장)`;
+        const text = await callGemini({ apiKey: config.geminiKey, prompt });
+        setFinalFeedback(text.trim());
       } catch (err) {
         setFinalFeedback("오늘 정말 고생 많았어! 너는 정말 멋진 수학 에이스야! 🌟");
       } finally {
@@ -410,19 +421,28 @@ export default function App() {
     reader.onloadend = async () => {
       const base64 = (reader.result as string).split(',')[1];
       try {
-        const ai = new GoogleGenAI({ apiKey: config.geminiKey });
-        const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${problems.map((p, i) => `${i+1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로 줘: { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 아주 따뜻하고 신나는 전체 피드백 (반말, 이모지 듬뿍)" }`;
-        const res = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64 } }] }],
-          config: { responseMimeType: "application/json" }
+        const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${problems.map((p, i) => `${i+1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로만 줘 (다른 말 없이): { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 아주 따뜻하고 신나는 전체 피드백 (반말, 이모지 듬뿍)" }`;
+        const text = await callGemini({
+          apiKey: config.geminiKey,
+          prompt,
+          imageBase64: base64,
+          imageMime: file.type || "image/jpeg",
+          jsonMode: true,
+          thinkingBudget: 512,
         });
-        const data = JSON.parse(res.text);
-        const gradedAnswers = data.corrections.map((c: any) => ({ val: c.userVal, ok: c.ok }));
+        const data = safeParseJSON<{ corrections: { ok: boolean; userVal: string }[]; feedback: string }>(text);
+        if (!data || !Array.isArray(data.corrections) || data.corrections.length === 0) {
+          throw new Error("채점 결과를 읽지 못했습니다.");
+        }
+        // 문제 수와 채점 결과 수가 다를 경우 보정
+        const gradedAnswers = problems.map((_, i) => {
+          const c = data.corrections[i];
+          return c ? { val: String(c.userVal ?? ""), ok: !!c.ok } : { val: "", ok: false };
+        });
         setAnswers(gradedAnswers);
         finishSolving(gradedAnswers, data.feedback);
       } catch (err) {
-        alert("채점 중 오류가 발생했습니다.");
+        showToast("채점에 실패했어요. 사진을 더 밝고 또렷하게 찍어 다시 시도해 주세요.");
       } finally {
         setIsGrading(false);
       }
@@ -1074,6 +1094,24 @@ export default function App() {
                             className="p-4 bg-amber-50 rounded-2xl text-amber-700 font-bold text-sm border border-amber-100"
                           >
                             💡 {hint}
+                          </motion.div>
+                        )}
+
+                        {hintError && !isAnsDisabled && (
+                          <motion.div 
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            className="p-4 bg-red-50 rounded-2xl border border-red-100 flex items-center justify-between gap-3"
+                          >
+                            <span className="text-red-600 font-bold text-sm">힌트를 못 받아왔어요 😢</span>
+                            <button
+                              onClick={getHint}
+                              disabled={isHintLoading}
+                              className="shrink-0 flex items-center gap-1.5 bg-red-500 hover:bg-red-600 text-white text-sm font-bold px-3 py-2 rounded-xl transition-colors disabled:opacity-50"
+                            >
+                              {isHintLoading ? <Loader2 className="animate-spin" size={16} /> : <RotateCcw size={16} />}
+                              다시 받기
+                            </button>
                           </motion.div>
                         )}
                       </motion.div>
