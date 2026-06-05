@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useReactToPrint } from 'react-to-print';
+import confetti from 'canvas-confetti';
 import { 
   Calculator, 
   Settings, 
@@ -52,6 +53,7 @@ interface Config {
   style: 'vertical' | 'horizontal';
   count: number;
   geminiKey: string;
+  childName?: string;
 }
 
 // --- Components ---
@@ -145,7 +147,8 @@ export default function App() {
       difficulty: 2,
       style: 'vertical',
       count: 20,
-      geminiKey: localStorage.getItem("gemini_key") || ""
+      geminiKey: localStorage.getItem("gemini_key") || "",
+      childName: ""
     };
   });
   
@@ -197,6 +200,18 @@ export default function App() {
   // 동기부여: 연속 정답 콤보
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
+  // 힌트 횟수 제한 (세션당 문제 수의 절반)
+  const [hintsUsed, setHintsUsed] = useState(0);
+  // 마일스톤 축하 오버레이
+  const [milestone, setMilestone] = useState<{ type: 'stars' | 'wish' | 'hall'; value: number } | null>(null);
+  // 소원 쿠폰 (50개마다 발급, 사용 전까지 보관)
+  const [wishCoupons, setWishCoupons] = useState<number[]>(() => {
+    try { return JSON.parse(localStorage.getItem("wish_coupons") || "[]"); } catch { return []; }
+  });
+  // 이미 축하한 별 마일스톤 (중복 폭죽 방지)
+  const [celebratedStars, setCelebratedStars] = useState<number[]>(() => {
+    try { return JSON.parse(localStorage.getItem("celebrated_stars") || "[]"); } catch { return []; }
+  });
 
   const toggleCorrection = (idx: number) => {
     const newAnswers = [...answers];
@@ -253,6 +268,62 @@ export default function App() {
     setTimeout(() => setToast({ message: "", show: false }), 2800);
   };
 
+  // ── 폭죽 효과 ──
+  const fireConfetti = (intensity: 'normal' | 'big' | 'epic' = 'normal') => {
+    const counts = { normal: 80, big: 160, epic: 280 };
+    const count = counts[intensity];
+    const colors = ['#fb923c', '#f59e0b', '#fbbf24', '#34d399', '#60a5fa', '#a78bfa', '#f472b6'];
+    // 중앙 분출
+    confetti({ particleCount: count, spread: 90, origin: { y: 0.6 }, colors });
+    if (intensity !== 'normal') {
+      // 양쪽에서 추가 분출
+      setTimeout(() => confetti({ particleCount: count / 2, angle: 60, spread: 70, origin: { x: 0, y: 0.7 }, colors }), 150);
+      setTimeout(() => confetti({ particleCount: count / 2, angle: 120, spread: 70, origin: { x: 1, y: 0.7 }, colors }), 150);
+    }
+    if (intensity === 'epic') {
+      setTimeout(() => confetti({ particleCount: 120, spread: 130, origin: { y: 0.4 }, colors, scalar: 1.3 }), 400);
+    }
+  };
+
+  // ── 별 마일스톤 체크 (10개 단위 폭죽, 50개 소원쿠폰, 100개 명예의전당) ──
+  const checkStarMilestones = (prevStars: number, newStars: number) => {
+    // 10개 단위 통과 지점 찾기
+    const newCelebrated = [...celebratedStars];
+    let triggered: { type: 'stars' | 'wish' | 'hall'; value: number } | null = null;
+    let newCoupons = [...wishCoupons];
+
+    for (let m = Math.floor(prevStars / 10) * 10 + 10; m <= newStars; m += 10) {
+      if (newCelebrated.includes(m)) continue;
+      newCelebrated.push(m);
+      if (m % 100 === 0) {
+        triggered = { type: 'hall', value: m };          // 100, 200...
+      } else if (m % 50 === 0) {
+        triggered = { type: 'wish', value: m };           // 50, 150...
+        if (!newCoupons.includes(m)) newCoupons.push(m);
+      } else {
+        triggered = triggered || { type: 'stars', value: m }; // 10,20,30...
+      }
+    }
+
+    if (newCelebrated.length !== celebratedStars.length) {
+      setCelebratedStars(newCelebrated);
+      localStorage.setItem("celebrated_stars", JSON.stringify(newCelebrated));
+    }
+    if (newCoupons.length !== wishCoupons.length) {
+      setWishCoupons(newCoupons);
+      localStorage.setItem("wish_coupons", JSON.stringify(newCoupons));
+    }
+    return triggered;
+  };
+
+  // 소원 쿠폰 사용 (부모가 처리)
+  const useWishCoupon = (value: number) => {
+    const updated = wishCoupons.filter(v => v !== value);
+    setWishCoupons(updated);
+    localStorage.setItem("wish_coupons", JSON.stringify(updated));
+    showToast("소원 쿠폰을 사용했어요! 🎁");
+  };
+
   const saveConfig = (newConfig: Config) => {
     setConfig(newConfig);
     localStorage.setItem("gemini_key", newConfig.geminiKey);
@@ -305,12 +376,13 @@ export default function App() {
     setSessionGoal("");
     setCombo(0);
     setMaxCombo(0);
+    setHintsUsed(0);
 
     // AI Goal Setting
     if (config.geminiKey) {
       try {
         const unitNames = Array.from(new Set(newProblems.map(p => p.unitName)));
-        const prompt = `오늘 풀 문제는 ${unitNames.join(", ")} 단원이야. 아이가 즐겁게 시작할 수 있도록 아주 짧고 신나는 목표 한마디 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1문장)`;
+        const prompt = `오늘 풀 문제는 ${unitNames.join(", ")} 단원이야.${config.childName?.trim() ? ` 아이 이름은 "${config.childName.trim()}"이야. 이름을 불러주면서` : " 아이가"} 즐겁게 시작할 수 있도록 아주 짧고 신나는 목표 한마디 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1문장)`;
         const text = await callGemini({ apiKey: config.geminiKey, prompt });
         setSessionGoal(text.trim());
       } catch (err) {
@@ -319,10 +391,21 @@ export default function App() {
     }
   };
 
+  const hintLimit = Math.max(1, Math.floor(problems.length / 2)); // 문제 수의 절반
+  const hintsLeft = hintLimit - hintsUsed;
+
   const getHint = async () => {
     if (isHintLoading || isAnsDisabled) return;
+    if (hintsLeft <= 0) {
+      showToast("오늘 힌트를 다 썼어요! 스스로 풀어볼까? 💪");
+      return;
+    }
     const p = problems[curIdx];
     setHintError(false);
+    setHintsUsed(h => h + 1); // 힌트 사용 차감
+
+    const childName = config.childName?.trim();
+    const namePart = childName ? `${childName}(이)가` : "아이가";
 
     // Gemini 키가 없으면 규칙 힌트만 즉시 표시
     if (!config.geminiKey) {
@@ -361,7 +444,8 @@ export default function App() {
         approach = `푸는 순서를 단계로 보여주되 마지막 답은 아이가 직접 내게 비워둬.`;
       }
 
-      const prompt = `너는 초등학교 ${grade}학년 아이를 가르치는 다정하고 똑똑한 선생님이야.
+      const prompt = `너는 초등학교 ${grade}학년 ${namePart} 가르치는 다정하고 똑똑한 선생님이야.
+${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자연스럽게 한 번 불러줘.` : ""}
 아이가 "${p.expr} = ?" 문제를 풀다가 힌트를 눌렀어. 풀이 과정을 시범으로 보여주는 게 목적이야.
 
 [이렇게 도와줘] ${approach}
@@ -369,7 +453,8 @@ export default function App() {
 꼭 지킬 규칙:
 - 정답(${p.ans})은 절대로 말하지 마. 답 바로 직전 단계까지만 보여주고, 마지막 한 걸음은 "그럼 얼마일까?" 처럼 아이가 직접 채우게 해.
 - "25를 머릿속에 떠올려봐" 같은 공허한 말은 금지. 반드시 실제 계산 과정(숫자)을 보여줘.
-- ${grade <= 2 ? '아주 쉬운 말로 1~2문장.' : '2문장 이내로 짧게.'}
+- 짧은 개념 한 스푼: 왜 그렇게 푸는지(예: "십의 자리는 10씩 묶음이야") 한 조각만 곁들여줘. 단 길어지지 않게.
+- ${grade <= 2 ? '아주 쉬운 말로 2문장 정도.' : '2~3문장 이내로.'}
 - 반말, 친근하게, 이모지 1개. 힌트 문장만 출력해.`;
 
       const text = await callGemini({ apiKey: config.geminiKey, prompt });
@@ -447,6 +532,15 @@ export default function App() {
     setStars(newStars);
     localStorage.setItem("stars", String(newStars));
 
+    // 별 마일스톤 체크 → 결과 화면 후 축하 오버레이 예약
+    const ms = checkStarMilestones(stars, newStars);
+    if (ms) {
+      setTimeout(() => {
+        setMilestone(ms);
+        fireConfetti(ms.type === 'hall' ? 'epic' : ms.type === 'wish' ? 'big' : 'normal');
+      }, 1400); // 결과 화면이 먼저 보인 뒤 축하
+    }
+
     const newBadges = BADGES.filter(b => !earnedBadges.includes(b.id) && newStars >= b.need).map(b => b.id);
     if (newBadges.length > 0) {
       const updatedBadges = [...earnedBadges, ...newBadges];
@@ -457,13 +551,18 @@ export default function App() {
     setChildPhase('result');
     setFinalFeedback("");
 
+    // 고득점 축하 폭죽 (만점 epic, 80%+ big)
+    const pct = total ? Math.round(correct / total * 100) : 0;
+    if (pct === 100) setTimeout(() => fireConfetti('epic'), 300);
+    else if (pct >= 80) setTimeout(() => fireConfetti('big'), 300);
+
     if (aiFeedback) {
       setFinalFeedback(aiFeedback);
     } else if (config.geminiKey) {
       setIsFinalFeedbackLoading(true);
       setFeedbackError(false);
       try {
-        const prompt = `아이의 오늘 수학 학습 결과야. 총 ${total}문제 중 ${correct}문제를 맞혔어. 아이의 눈높이에 맞춰서 아주 따뜻하고 신나는 칭찬과 격려의 한마디를 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1~2문장)`;
+        const prompt = `${config.childName?.trim() ? `"${config.childName.trim()}"(이)라는 아이의` : "아이의"} 오늘 수학 학습 결과야. 총 ${total}문제 중 ${correct}문제를 맞혔어. ${config.childName?.trim() ? "이름을 불러주면서 " : ""}아이의 눈높이에 맞춰서 아주 따뜻하고 신나는 칭찬과 격려의 한마디를 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1~2문장)`;
         const text = await callGemini({ apiKey: config.geminiKey, prompt });
         setFinalFeedback(text.trim());
       } catch (err) {
@@ -876,6 +975,24 @@ export default function App() {
                       </div>
                     </section>
 
+                    <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                      <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
+                        <Star size={18} className="text-amber-400" />
+                        <h3>아이 이름</h3>
+                      </div>
+                      <div className="space-y-2">
+                        <input 
+                          type="text" 
+                          className="input-field bg-slate-50" 
+                          placeholder="예: 지민"
+                          maxLength={10}
+                          value={config.childName || ""}
+                          onChange={(e) => setConfig({...config, childName: e.target.value})}
+                        />
+                        <p className="text-[10px] text-slate-400">힌트와 칭찬에서 아이 이름을 불러줘요. (선택)</p>
+                      </div>
+                    </section>
+
                     <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 opacity-60 hover:opacity-100 transition-opacity">
                       <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">
                         <Calculator size={18} className="text-slate-400" />
@@ -945,6 +1062,28 @@ export default function App() {
                     </div>
                   ) : (
                     <>
+                      {/* 소원 쿠폰 관리 (부모) */}
+                      {wishCoupons.length > 0 && (
+                        <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-5 mb-4">
+                          <div className="flex items-center gap-2 font-black text-amber-700 mb-3">
+                            🎁 아이가 모은 소원 쿠폰 {wishCoupons.length}장
+                          </div>
+                          <div className="space-y-2">
+                            {wishCoupons.map((v) => (
+                              <div key={v} className="flex items-center justify-between bg-white rounded-xl px-4 py-3 border border-amber-100">
+                                <span className="text-sm font-bold text-slate-700">별 {v}개 달성 쿠폰</span>
+                                <button
+                                  onClick={() => useWishCoupon(v)}
+                                  className="text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg transition-colors"
+                                >
+                                  사용 완료
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <p className="text-[11px] text-amber-500 mt-3">소원을 들어주셨다면 "사용 완료"를 눌러주세요.</p>
+                        </div>
+                      )}
                       {records.length === 0 ? (
                         <div className="text-center py-20">
                           <History size={48} className="mx-auto text-slate-200 mb-4" />
@@ -1117,6 +1256,25 @@ export default function App() {
                       </div>
                     ))}
                   </div>
+
+                  {/* 소원 쿠폰 보관함 */}
+                  {wishCoupons.length > 0 && (
+                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4">
+                      <div className="flex items-center justify-center gap-2 text-amber-600 font-black text-sm mb-2">
+                        🎁 내 소원 쿠폰 {wishCoupons.length}장
+                      </div>
+                      <p className="text-center text-[11px] text-amber-500">엄마·아빠에게 보여주고 소원을 말해보세요!</p>
+                    </div>
+                  )}
+
+                  {/* 명예의 전당 (별 100개 이상) */}
+                  {stars >= 100 && (
+                    <div className="bg-gradient-to-br from-brand-500 to-blue-600 rounded-2xl p-4 text-center text-white shadow-lg">
+                      <div className="text-2xl mb-1">👑</div>
+                      <div className="font-black">명예의 전당</div>
+                      <div className="text-xs opacity-90">별 {stars}개의 수학 마스터!</div>
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -1242,12 +1400,15 @@ export default function App() {
                   <div className="flex gap-3 w-full">
                     {!isAnsDisabled && (
                       <button 
-                        className="btn-secondary flex-1 py-6 text-xl flex items-center justify-center gap-2"
+                        className="btn-secondary flex-1 py-6 text-xl flex items-center justify-center gap-2 disabled:opacity-40"
                         onClick={getHint}
-                        disabled={isHintLoading}
+                        disabled={isHintLoading || hintsLeft <= 0}
                       >
                         {isHintLoading ? <Loader2 className="animate-spin" size={24} /> : <Lightbulb size={24} />}
-                        <span>힌트 보기</span>
+                        <span>힌트</span>
+                        <span className={`text-sm font-black px-2 py-0.5 rounded-full ${hintsLeft > 0 ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 text-slate-400'}`}>
+                          {hintsLeft}
+                        </span>
                       </button>
                     )}
                     <button 
@@ -1387,6 +1548,61 @@ export default function App() {
 
       {/* PIN Overlay */}
       <AnimatePresence>
+        {/* 마일스톤 축하 오버레이 */}
+        <AnimatePresence>
+          {milestone && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[120] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6"
+              onClick={() => setMilestone(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.5, y: 40 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.5, opacity: 0 }}
+                transition={{ type: "spring", damping: 14 }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-[2.5rem] p-10 max-w-sm w-full text-center shadow-2xl"
+              >
+                {milestone.type === 'stars' && (
+                  <>
+                    <div className="text-7xl mb-4">🎉</div>
+                    <h2 className="text-3xl font-black text-slate-900 font-display mb-2">별 {milestone.value}개 달성!</h2>
+                    <p className="text-slate-500 font-medium">{config.childName?.trim() ? `${config.childName.trim()}, ` : ""}정말 대단해! 계속 모아보자 ⭐</p>
+                  </>
+                )}
+                {milestone.type === 'wish' && (
+                  <>
+                    <div className="text-7xl mb-4">🎁</div>
+                    <h2 className="text-3xl font-black text-amber-500 font-display mb-2">소원 쿠폰 획득!</h2>
+                    <p className="text-slate-500 font-medium mb-4">별 {milestone.value}개 달성 기념!<br/>엄마·아빠에게 소원 하나를 말할 수 있어요 ✨</p>
+                    <div className="bg-gradient-to-br from-amber-100 to-orange-100 border-2 border-dashed border-amber-400 rounded-2xl p-5">
+                      <div className="text-xs font-black text-amber-600 tracking-widest mb-1">★ WISH COUPON ★</div>
+                      <div className="text-lg font-black text-slate-800">소원 들어주기 1회</div>
+                      <div className="text-[10px] text-amber-500 mt-1">부모님께 보여주세요!</div>
+                    </div>
+                  </>
+                )}
+                {milestone.type === 'hall' && (
+                  <>
+                    <div className="text-7xl mb-4">👑</div>
+                    <h2 className="text-3xl font-black text-brand-600 font-display mb-2">명예의 전당 입성!</h2>
+                    <p className="text-slate-500 font-medium">별 {milestone.value}개! {config.childName?.trim() ? `${config.childName.trim()}는 ` : ""}진정한 수학 마스터야 👑</p>
+                  </>
+                )}
+                <button
+                  onClick={() => setMilestone(null)}
+                  className="btn-primary w-full mt-6 py-4 text-lg"
+                >
+                  좋아! 🙌
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {pinOverlay && (
           <motion.div 
             initial={{ opacity: 0 }}
