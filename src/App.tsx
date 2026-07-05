@@ -19,7 +19,6 @@ import {
   CheckCircle2, 
   XCircle, 
   Lock, 
-  Unlock, 
   User, 
   Baby, 
   Home, 
@@ -190,9 +189,7 @@ export default function App() {
   const [isGrading, setIsGrading] = useState(false);
   const [isHintLoading, setIsHintLoading] = useState(false);
   // 오류 복구용 플래그
-  const [hintError, setHintError] = useState(false);
   const [gradingError, setGradingError] = useState(false);
-  const [feedbackError, setFeedbackError] = useState(false);
   // 종이 채점: 인쇄한 문제를 따로 보관 (화면 풀이 problems와 분리)
   const [printedProblems, setPrintedProblems] = useState<MathProblem[]>([]);
   // 마지막 업로드 이미지 (채점 재시도용)
@@ -296,12 +293,13 @@ export default function App() {
       if (newCelebrated.includes(m)) continue;
       newCelebrated.push(m);
       if (m % 100 === 0) {
-        triggered = { type: 'hall', value: m };          // 100, 200...
+        triggered = { type: 'hall', value: m };          // 100, 200... (최우선)
       } else if (m % 50 === 0) {
-        triggered = { type: 'wish', value: m };           // 50, 150...
         if (!newCoupons.includes(m)) newCoupons.push(m);
+        if (triggered?.type !== 'hall') triggered = { type: 'wish', value: m }; // 50, 150...
       } else {
-        triggered = triggered || { type: 'stars', value: m }; // 10,20,30...
+        // 10,20,30... — 더 높은 등급이 없을 때만, 항상 최신 값으로 갱신
+        if (!triggered || triggered.type === 'stars') triggered = { type: 'stars', value: m };
       }
     }
 
@@ -372,7 +370,6 @@ export default function App() {
     setFeedbackIcon(null);
     setCharFeedback("");
     setHint("");
-    setHintError(false);
     setSessionGoal("");
     setCombo(0);
     setMaxCombo(0);
@@ -396,12 +393,12 @@ export default function App() {
 
   const getHint = async () => {
     if (isHintLoading || isAnsDisabled) return;
+    if (hint) return; // 이미 힌트가 떠 있으면 재차감 방지
     if (hintsLeft <= 0) {
       showToast("오늘 힌트를 다 썼어요! 스스로 풀어볼까? 💪");
       return;
     }
     const p = problems[curIdx];
-    setHintError(false);
     setHintsUsed(h => h + 1); // 힌트 사용 차감
 
     const childName = config.childName?.trim();
@@ -469,7 +466,12 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
   const submitAnswer = async () => {
     if (!ansInput || isAnsDisabled) return;
     const p = problems[curIdx];
-    const ok = String(p.ans).trim() === ansInput.trim() || parseFloat(p.ans) === parseFloat(ansInput);
+    // 정답 비교: 공백 정규화 후 문자열 비교. 순수 숫자 정답만 수치 비교 허용
+    // (parseFloat는 "3 … 2"→3, "3/4"→3 으로 잘려 부분 입력이 오답인데 정답 처리되는 버그가 있었음)
+    const norm = (s: string) => s.replace(/\s+/g, "");
+    const ansIsPureNumber = /^-?\d+(\.\d+)?$/.test(String(p.ans).trim());
+    const ok = norm(String(p.ans)) === norm(ansInput) ||
+               (ansIsPureNumber && /^-?\d+(\.\d+)?$/.test(ansInput.trim()) && parseFloat(p.ans) === parseFloat(ansInput));
     
     setIsAnsDisabled(true);
     setFeedbackIcon(ok ? 'check' : 'x');
@@ -502,7 +504,6 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
         setFeedbackIcon(null);
         setCharFeedback("");
         setHint("");
-        setHintError(false);
       }
     }, ok ? 1200 : 1500);
   };
@@ -560,7 +561,6 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
       setFinalFeedback(aiFeedback);
     } else if (config.geminiKey) {
       setIsFinalFeedbackLoading(true);
-      setFeedbackError(false);
       try {
         const prompt = `${config.childName?.trim() ? `"${config.childName.trim()}"(이)라는 아이의` : "아이의"} 오늘 수학 학습 결과야. 총 ${total}문제 중 ${correct}문제를 맞혔어. ${config.childName?.trim() ? "이름을 불러주면서 " : ""}아이의 눈높이에 맞춰서 아주 따뜻하고 신나는 칭찬과 격려의 한마디를 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1~2문장)`;
         const text = await callGemini({ apiKey: config.geminiKey, prompt });
@@ -611,6 +611,8 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
       // 채점은 인쇄 문제 기준이므로 problems도 맞춰줌
       setProblems(target);
       setAnswers(gradedAnswers);
+      setCombo(0);
+      setMaxCombo(0); // 종이 채점엔 콤보 개념 없음 — 이전 세션 값 잔존 방지
       finishSolving(gradedAnswers, data.feedback, target);
     } catch (err) {
       setGradingError(true);
