@@ -388,6 +388,26 @@ export default function App() {
     }
   };
 
+  // ── 자체 키패드 입력 처리 (네이티브 키보드 미사용) ──
+  const keypadPress = (key: string) => {
+    if (isAnsDisabled) return;
+    if (key === "⌫") { setAnsInput(v => v.slice(0, -1)); return; }
+    if (key === "C") { setAnsInput(""); return; }
+    setAnsInput(v => (v.length >= 12 ? v : v + key));
+  };
+
+  // 현재 문제 유형에 필요한 특수키 (분수 /, 비율 :, 나머지 …, 소수 .)
+  const specialKeys = (() => {
+    const p = problems[curIdx];
+    if (!p) return [];
+    const keys: string[] = [];
+    if (String(p.ans).includes(".")) keys.push(".");
+    if (String(p.ans).includes("/")) keys.push("/");
+    if (String(p.ans).includes(":")) keys.push(":");
+    if (String(p.ans).includes("…")) keys.push("…");
+    return keys;
+  })();
+
   const hintLimit = Math.max(1, Math.floor(problems.length / 2)); // 문제 수의 절반
   const hintsLeft = hintLimit - hintsUsed;
 
@@ -442,17 +462,21 @@ export default function App() {
       }
 
       const prompt = `너는 초등학교 ${grade}학년 ${namePart} 가르치는 다정하고 똑똑한 선생님이야.
-${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자연스럽게 한 번 불러줘.` : ""}
-아이가 "${p.expr} = ?" 문제를 풀다가 힌트를 눌렀어. 풀이 과정을 시범으로 보여주는 게 목적이야.
+${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 자연스럽게 한 번 불러줘.` : ""}
+아이가 "${p.expr} = ?" 문제를 풀다가 힌트를 눌렀어. 풀이 과정을 단계별로 시범 보여주는 게 목적이야.
 
 [이렇게 도와줘] ${approach}
 
+⚠️ 출력 형식 (반드시 이 형식, 각 줄은 줄바꿈으로 구분):
+개념: (왜 그렇게 푸는지 아주 짧은 원리 한 줄)
+1. (첫 번째 계산 단계 — 실제 숫자와 중간 결과 포함)
+2. (두 번째 단계 — 마지막 답 직전까지만, "그럼 얼마일까?"로 끝내기)
+
 꼭 지킬 규칙:
-- 정답(${p.ans})은 절대로 말하지 마. 답 바로 직전 단계까지만 보여주고, 마지막 한 걸음은 "그럼 얼마일까?" 처럼 아이가 직접 채우게 해.
-- "25를 머릿속에 떠올려봐" 같은 공허한 말은 금지. 반드시 실제 계산 과정(숫자)을 보여줘.
-- 짧은 개념 한 스푼: 왜 그렇게 푸는지(예: "십의 자리는 10씩 묶음이야") 한 조각만 곁들여줘. 단 길어지지 않게.
-- ${grade <= 2 ? '아주 쉬운 말로 2문장 정도.' : '2~3문장 이내로.'}
-- 반말, 친근하게, 이모지 1개. 힌트 문장만 출력해.`;
+- 정답(${p.ans})은 절대로 말하지 마.
+- 한 줄에 한 가지 정보만. 각 줄은 ${grade <= 2 ? '10자 내외로 아주 짧게' : '15자 내외로 짧게'}.
+- "머릿속에 떠올려봐" 같은 공허한 말 금지. 반드시 실제 숫자 계산을 보여줘.
+- 반말, 이모지는 개념 줄에만 1개. 위 형식 외 다른 말 없이 출력해.`;
 
       const text = await callGemini({ apiKey: config.geminiKey, prompt });
       setHint(text && text.trim() ? text.trim() : localHint(p.expr, p.op, p.a, p.b));
@@ -1284,7 +1308,7 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
                 <motion.div 
                   initial={{ scale: 0.95, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  className="w-full space-y-6"
+                  className="w-full space-y-4"
                 >
                   <div className="flex justify-between items-center px-2 gap-3">
                     <div className="bg-slate-200 h-2.5 flex-1 rounded-full overflow-hidden">
@@ -1310,7 +1334,7 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
                     <span className="shrink-0 text-xs font-black text-slate-400 font-mono">{curIdx + 1} / {problems.length}</span>
                   </div>
 
-                  <div className="bg-white rounded-[2.5rem] p-12 shadow-2xl shadow-slate-200/50 border border-slate-100 text-center relative overflow-hidden">
+                  <div className="bg-white rounded-[2.5rem] px-8 py-6 sm:py-8 shadow-2xl shadow-slate-200/50 border border-slate-100 text-center relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-full h-2 bg-brand-500/10"></div>
                     
                     <AnimatePresence mode="wait">
@@ -1332,24 +1356,21 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
                         )}
 
                         <div className={`flex items-center justify-center gap-3 ${config.style === 'horizontal' ? 'flex-row flex-wrap' : 'flex-col'}`}>
-                          <div className="text-5xl sm:text-6xl font-black text-slate-900 font-display tracking-tighter whitespace-nowrap">
+                          <div className="text-4xl sm:text-5xl font-black text-slate-900 font-display tracking-tighter whitespace-nowrap">
                             {problems[curIdx].expr} <span className="text-brand-500">＝</span>
                           </div>
 
                           <div className="relative w-[140px] sm:w-[160px]">
                             <input 
-                              autoFocus
-                              inputMode="decimal"
-                              className={`w-full text-center text-5xl sm:text-6xl font-black font-display bg-slate-50 border-b-4 py-3 outline-none transition-all ${
+                              readOnly
+                              className={`w-full text-center text-4xl sm:text-5xl font-black font-display bg-slate-50 border-b-4 py-2 outline-none transition-all caret-transparent ${
                                 isAnsDisabled 
                                   ? (answers[curIdx]?.ok ? 'border-emerald-500 text-emerald-600 bg-emerald-50' : 'border-rose-500 text-rose-600 bg-rose-50') 
-                                  : 'border-slate-200 focus:border-brand-500 text-slate-900'
+                                  : 'border-slate-200 text-slate-900'
                               }`}
                               value={ansInput}
-                              onChange={(e) => setAnsInput(e.target.value)}
-                              disabled={isAnsDisabled}
                               placeholder="?"
-                              onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
+                              tabIndex={-1}
                             />
                             {isAnsDisabled && (
                               <motion.div 
@@ -1371,15 +1392,39 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
                           <motion.div 
                             initial={{ opacity: 0, height: 0 }}
                             animate={{ opacity: 1, height: 'auto' }}
-                            className="p-4 bg-amber-50 rounded-2xl text-amber-700 font-bold text-sm border border-amber-100 flex items-center gap-2"
+                            className="p-4 bg-amber-50 rounded-2xl border border-amber-100"
                           >
                             {isHintLoading ? (
-                              <>
+                              <div className="flex items-center gap-2 text-amber-700 font-bold text-sm">
                                 <Loader2 className="animate-spin shrink-0" size={16} />
                                 <span>힌트를 준비하고 있어요...</span>
-                              </>
+                              </div>
                             ) : (
-                              <span className="flex-1">💡 {hint}</span>
+                              <div className="space-y-1.5 text-left">
+                                {hint.split("\n").filter(l => l.trim()).map((line, i) => {
+                                  const t = line.trim().replace(/^개념:\s*/, "");
+                                  const isConcept = i === 0;
+                                  const stepMatch = t.match(/^(\d)[.)]\s*(.*)/);
+                                  if (isConcept) {
+                                    return (
+                                      <div key={i} className="font-black text-amber-800 text-sm pb-1 border-b border-amber-200/60">
+                                        💡 {t}
+                                      </div>
+                                    );
+                                  }
+                                  if (stepMatch) {
+                                    return (
+                                      <div key={i} className="flex items-start gap-2 text-amber-700 font-bold text-sm">
+                                        <span className="shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 text-[11px] font-black flex items-center justify-center mt-0.5">
+                                          {stepMatch[1]}
+                                        </span>
+                                        <span>{stepMatch[2]}</span>
+                                      </div>
+                                    );
+                                  }
+                                  return <div key={i} className="text-amber-700 font-bold text-sm">{t}</div>;
+                                })}
+                              </div>
                             )}
                           </motion.div>
                         )}
@@ -1399,10 +1444,46 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
                     </AnimatePresence>
                   </div>
 
+                  {/* 자체 숫자 키패드 — 네이티브 키보드 없이 입력 (화면 가림 방지) */}
+                  {!isAnsDisabled && (
+                    <div className="w-full max-w-md mx-auto">
+                      <div className="grid grid-cols-3 gap-2">
+                        {["1","2","3","4","5","6","7","8","9"].map(k => (
+                          <button key={k} onClick={() => keypadPress(k)}
+                            className="bg-white border border-slate-200 rounded-2xl py-4 text-2xl font-black text-slate-800 shadow-sm active:scale-95 active:bg-brand-50 transition-all">
+                            {k}
+                          </button>
+                        ))}
+                        <button onClick={() => keypadPress("C")}
+                          className="bg-slate-100 border border-slate-200 rounded-2xl py-4 text-sm font-black text-slate-500 active:scale-95 transition-all">
+                          지우기
+                        </button>
+                        <button onClick={() => keypadPress("0")}
+                          className="bg-white border border-slate-200 rounded-2xl py-4 text-2xl font-black text-slate-800 shadow-sm active:scale-95 active:bg-brand-50 transition-all">
+                          0
+                        </button>
+                        <button onClick={() => keypadPress("⌫")}
+                          className="bg-slate-100 border border-slate-200 rounded-2xl py-4 text-xl font-black text-slate-500 active:scale-95 transition-all">
+                          ⌫
+                        </button>
+                      </div>
+                      {specialKeys.length > 0 && (
+                        <div className="grid gap-2 mt-2" style={{ gridTemplateColumns: `repeat(${specialKeys.length}, 1fr)` }}>
+                          {specialKeys.map(k => (
+                            <button key={k} onClick={() => keypadPress(k === "…" ? " … " : k)}
+                              className="bg-amber-50 border border-amber-200 rounded-2xl py-3 text-xl font-black text-amber-700 active:scale-95 transition-all">
+                              {k}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex gap-3 w-full">
                     {!isAnsDisabled && (
                       <button 
-                        className="btn-secondary flex-1 py-6 text-xl flex items-center justify-center gap-2 disabled:opacity-40"
+                        className="btn-secondary flex-1 py-4 text-lg flex items-center justify-center gap-2 disabled:opacity-40"
                         onClick={getHint}
                         disabled={isHintLoading || hintsLeft <= 0}
                       >
@@ -1414,7 +1495,7 @@ ${childName ? `아이 이름은 "${childName}"이야. 힌트에서 이름을 자
                       </button>
                     )}
                     <button 
-                      className="btn-primary flex-[2] py-6 text-xl shadow-xl shadow-brand-100 flex items-center justify-center gap-3"
+                      className="btn-primary flex-[2] py-4 text-lg shadow-xl shadow-brand-100 flex items-center justify-center gap-3"
                       onClick={submitAnswer}
                       disabled={isAnsDisabled || !ansInput}
                     >

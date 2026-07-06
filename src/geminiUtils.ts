@@ -58,24 +58,32 @@ export function safeParseJSON<T = any>(text: string): T | null {
   return null;
 }
 
-/** 규칙 기반 힌트 — LLM 없이 즉시. 답 직전까지 풀이를 보여주되 마지막은 아이 몫으로. */
+/** 규칙 기반 힌트 — LLM 없이 즉시. 개념 1줄 + 단계별 줄바꿈 구조. 답은 아이 몫. */
 export function localHint(expr: string, op: string, a?: number, b?: number): string {
   if (op === "-" && a !== undefined && b !== undefined) {
     const bTen = Math.floor(b / 10) * 10, bOne = b % 10;
-    if (bOne === 0 && bTen > 0) return `${b}은 딱 몇십이야. ${a}에서 십의 자리만 ${Math.floor(a/10)}−${bTen/10}만큼 줄이면 얼마일까? 👍`;
-    if ((a % 10) < bOne) return `${a}에서 먼저 ${bTen}을 빼면 ${a - bTen}, 거기서 ${bOne}을 더 빼면? 직접 해볼래? ✏️`;
-    if (bTen > 0) return `${a}에서 ${bTen}을 빼면 ${a - bTen}이야. 거기서 ${bOne}을 빼면 얼마일까? 👍`;
-    return `${a}에서 ${bOne}을 빼면 몇이 될까? 손가락으로 세어봐도 좋아 👍`;
+    if (bOne === 0 && bTen > 0)
+      return `빼는 수가 딱 몇십이야 ✏️\n1. 십의 자리끼리: ${Math.floor(a/10)}−${bTen/10}\n2. 일의 자리는 그대로! 그럼 얼마일까?`;
+    if ((a % 10) < bOne)
+      return `일의 자리가 모자라면 십에서 빌려와 ✏️\n1. ${a}에서 ${bTen}을 먼저 빼 → ${a - bTen}\n2. ${a - bTen}에서 ${bOne}을 빼면?`;
+    if (bTen > 0)
+      return `큰 수부터 나눠서 빼면 쉬워 ✏️\n1. ${a}에서 ${bTen}을 빼 → ${a - bTen}\n2. ${a - bTen}에서 ${bOne}을 빼면?`;
+    return `하나씩 세면서 빼보자 ✏️\n1. ${a}에서 ${bOne}만큼 거꾸로 세어봐\n2. 몇에서 멈출까?`;
   }
   if (op === "+" && a !== undefined && b !== undefined) {
     const aTen = Math.floor(a / 10) * 10, aOne = a % 10;
     const bTen = Math.floor(b / 10) * 10, bOne = b % 10;
-    if (aTen + bTen > 0) return `십끼리 더하면 ${aTen + bTen}, 일끼리는 ${aOne}+${bOne}이야. 둘을 합치면 얼마일까? ✏️`;
-    return `${aOne}하고 ${bOne}을 더하면 몇이 될까? 직접 세어봐! 👍`;
+    if (aTen + bTen > 0)
+      return `십은 십끼리, 일은 일끼리 ✏️\n1. 십끼리: ${aTen}+${bTen} → ${aTen + bTen}\n2. 일끼리: ${aOne}+${bOne}, 둘을 합치면?`;
+    return `수를 이어서 세면 돼 ✏️\n1. ${a}에서 시작해\n2. ${b}만큼 이어 세면 얼마일까?`;
   }
-  if (op === "×" && a !== undefined && b !== undefined) return `${a}을 ${b}번 더하는 거야. 구구단 ${b}단을 떠올려서 직접 말해볼래? ✏️`;
-  if (op === "÷" && a !== undefined && b !== undefined) return `${b} 곱하기 얼마가 ${a}이 될까? 거꾸로 생각해봐! 👍`;
-  if (expr.includes("/")) return `분모가 같으니 분자끼리만 계산하면 돼. 직접 해볼래? ✏️`;
-  if (expr.includes(":")) return `두 수를 같은 수로 나눠서 더 작게 만들어봐 👍`;
-  return `차근차근 한 단계씩 풀어볼까? 💪`;
+  if (op === "×" && a !== undefined && b !== undefined)
+    return `곱셈은 같은 수를 여러 번 더하는 거야 ✏️\n1. ${a}을 ${b}번 더한다고 생각해\n2. 구구단 ${b}단으로 말해볼까?`;
+  if (op === "÷" && a !== undefined && b !== undefined)
+    return `나눗셈은 곱셈을 거꾸로! ✏️\n1. ${b} × □ = ${a}\n2. □에 들어갈 수는 뭘까?`;
+  if (expr.includes("/"))
+    return `분모가 같으면 분자끼리만 계산해 ✏️\n1. 위의 숫자(분자)끼리 계산해\n2. 분모는 그대로! 답은?`;
+  if (expr.includes(":"))
+    return `비는 같은 수로 나눠 간단히 해 ✏️\n1. 두 수를 똑같이 나눌 수 있는 수를 찾아\n2. 나누면 어떻게 될까?`;
+  return `차근차근 한 단계씩! 💪\n1. 먼저 큰 수부터 처리해\n2. 남은 걸 계산하면?`;
 }
