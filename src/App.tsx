@@ -10,13 +10,21 @@ import {
   Calculator, Settings, History, Star, Award, ChevronRight, ChevronLeft,
   Printer, Camera, CheckCircle2, XCircle, Lock, User, Baby, Home, ArrowRight,
   RotateCcw, Sprout, Flame, Gem, Trophy, Check, X, Loader2, Lightbulb,
-  Sparkles, Smartphone, Plus, Delete
+  Sparkles, Smartphone, Plus, Delete, RefreshCw
 } from 'lucide-react';
 import { UNITS, BADGES, GRADE_COLORS } from './constants';
 import { makeProblems } from './mathUtils';
 import { MathProblem, LearningRecord } from './types';
 import { callGemini, safeParseJSON, localHint } from './geminiUtils';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  migrateLocal, startAutoSync, onSyncApplied, onSyncStatus, getSyncStatus, SyncStatus,
+  markRecordDirty, markCouponUsed, touchConfig, touchPin, touchCelebrated,
+  checkServer, connectSync, runSync, disconnectSync, activeProfileId
+} from './sync';
+
+// 기존 기기 데이터 1회 이전 (사용한 쿠폰 목록 생성) — 첫 렌더 전에 실행
+migrateLocal();
 
 // ─────────────────────────────────────────────
 // 유틸: 천 단위 콤마
@@ -196,6 +204,71 @@ export default function App() {
   });
   const [selectedRecord, setSelectedRecord] = useState<LearningRecord | null>(null);
 
+  // 동기화
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => getSyncStatus());
+  const [syncUrlInput, setSyncUrlInput] = useState("");
+  const [syncTokenInput, setSyncTokenInput] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
+
+  const configAtRef = useRef(localStorage.getItem("config_updated_at") || "");
+  /** 동기화로 localStorage가 바뀌면 화면 상태를 다시 읽음 */
+  const reloadFromStorage = () => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("records") || "{}");
+      setRecords(Object.values(stored).sort((a: any, b: any) => b.ts - a.ts) as LearningRecord[]);
+    } catch { setRecords([]); }
+    setStars(parseInt(localStorage.getItem("stars") || "0") || 0);
+    try { setEarnedBadges(JSON.parse(localStorage.getItem("badges") || "[]")); } catch { }
+    try { setWishCoupons(JSON.parse(localStorage.getItem("wish_coupons") || "[]")); } catch { }
+    try { setCelebratedStars(JSON.parse(localStorage.getItem("celebrated_stars") || "[]")); } catch { }
+    // 설정은 다른 기기에서 실제로 바뀐 경우에만 덮어씀 (부모가 입력 중인 값 보호)
+    const cfgAt = localStorage.getItem("config_updated_at") || "";
+    if (cfgAt !== configAtRef.current) {
+      configAtRef.current = cfgAt;
+      try {
+        const c = JSON.parse(localStorage.getItem("app_config") || "null");
+        if (c) setConfig(prev => ({ ...prev, ...c, geminiKey: prev.geminiKey || c.geminiKey || "" }));
+      } catch { }
+    }
+    setParentPin(localStorage.getItem("parent_pin") || "1234");
+  };
+
+  useEffect(() => {
+    const offApplied = onSyncApplied(reloadFromStorage);
+    const offStatus = onSyncStatus(setSyncStatus);
+    startAutoSync();
+    return () => { offApplied(); offStatus(); };
+  }, []);
+
+  const connectDevice = async (mode: 'upload' | 'download') => {
+    const url = syncUrlInput.trim(), token = syncTokenInput.trim();
+    if (!/^https:\/\/script\.google\.com\//.test(url)) { showToast("웹 앱 URL을 확인해 주세요 (https://script.google.com/...)"); return; }
+    if (!token) { showToast("가족 코드를 입력해 주세요"); return; }
+    setSyncBusy(true);
+    try {
+      const info = await checkServer(url, token);
+      const localCount = records.length;
+      const msg = mode === 'upload'
+        ? `이 기기를 기준으로 시작합니다.\n\n서버 기록 ${info.records}건을 지우고, 이 기기의 기록 ${localCount}건·별·쿠폰·설정으로 덮어씁니다.\n\n계속할까요?`
+        : `서버 데이터를 받아옵니다.\n\n이 기기의 기록 ${localCount}건·별·쿠폰을 지우고, 서버 기록 ${info.records}건으로 바꿉니다.\n(Gemini 키는 그대로 유지)\n\n계속할까요?`;
+      if (!window.confirm(msg)) return;
+      await connectSync(url, token, mode);
+      setSyncUrlInput(""); setSyncTokenInput("");
+      showToast(mode === 'upload' ? "이 기기 기준으로 동기화를 시작했어요!" : "서버 데이터를 받아왔어요!");
+    } catch (e: any) {
+      showToast(e?.message || "연결에 실패했어요");
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
+  const syncNow = async () => {
+    setSyncBusy(true);
+    try { await runSync('normal'); showToast("동기화했어요!"); }
+    catch (e: any) { showToast(e?.message || "동기화에 실패했어요"); }
+    finally { setSyncBusy(false); }
+  };
+
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({ contentRef: printRef });
 
@@ -245,6 +318,7 @@ export default function App() {
     if (newCelebrated.length !== celebratedStars.length) {
       setCelebratedStars(newCelebrated);
       localStorage.setItem("celebrated_stars", JSON.stringify(newCelebrated));
+      touchCelebrated();
     }
     if (newCoupons.length !== wishCoupons.length) {
       setWishCoupons(newCoupons);
@@ -257,6 +331,7 @@ export default function App() {
     const updated = wishCoupons.filter(v => v !== value);
     setWishCoupons(updated);
     localStorage.setItem("wish_coupons", JSON.stringify(updated));
+    markCouponUsed(value);
     showToast("소원 쿠폰을 사용했어요! 🎁");
   };
 
@@ -265,6 +340,8 @@ export default function App() {
     setConfig(clamped);
     localStorage.setItem("gemini_key", clamped.geminiKey);
     localStorage.setItem("app_config", JSON.stringify(clamped));
+    touchConfig();
+    configAtRef.current = localStorage.getItem("config_updated_at") || "";
     showToast("설정이 저장되었습니다!");
   };
 
@@ -272,6 +349,7 @@ export default function App() {
     if (newPin.length !== 4) { showToast("PIN 번호는 4자리여야 합니다."); return; }
     setParentPin(newPin);
     localStorage.setItem("parent_pin", newPin);
+    touchPin();
     setNewPin("");
     showToast("PIN 번호가 변경되었습니다!");
   };
@@ -300,6 +378,7 @@ export default function App() {
       lastRecord.answers = newAnswers;
       lastRecord.correct = newAnswers.filter(a => a.ok).length;
       lastRecord.wrongExprs = problems.filter((_, i) => !newAnswers[i].ok).map(p => p.expr);
+      lastRecord.updatedAt = Date.now();
       updatedRecords[0] = lastRecord;
       setRecords(updatedRecords);
       const stored = JSON.parse(localStorage.getItem("records") || "{}");
@@ -309,6 +388,7 @@ export default function App() {
       const totalStars = allRecords.reduce((acc, r) => acc + Math.floor(r.correct / 5), 0);
       setStars(totalStars);
       localStorage.setItem("stars", String(totalStars));
+      markRecordDirty(lastRecord.ts);
     }
   };
 
@@ -494,12 +574,15 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
       unitNames: Array.from(new Set(srcProblems.map(p => p.unitName))),
       wrongExprs: srcProblems.filter((_, i) => !finalAnswers[i]?.ok).map(p => p.expr),
       problems: [...srcProblems],
-      answers: [...finalAnswers]
+      answers: [...finalAnswers],
+      profileId: activeProfileId()
     };
+    newRecord.updatedAt = newRecord.ts;
     const stored = JSON.parse(localStorage.getItem("records") || "{}");
     stored[newRecord.ts] = newRecord;
     localStorage.setItem("records", JSON.stringify(stored));
     setRecords(Object.values(stored).sort((a: any, b: any) => b.ts - a.ts) as LearningRecord[]);
+    markRecordDirty(newRecord.ts);
 
     const earned = Math.floor(correct / 5);
     const newStars = stars + earned;
@@ -814,6 +897,62 @@ ${wrongSummary}
                       <div className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em] whitespace-nowrap">System Administration</div>
                       <div className="h-px bg-slate-200 flex-1"></div>
                     </div>
+
+                    {/* 기기 동기화 */}
+                    <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 text-slate-900 font-bold">
+                          <RefreshCw size={18} className={`text-trust-600 ${syncStatus.state === 'syncing' ? 'animate-spin' : ''}`} /><h3>기기 동기화</h3>
+                        </div>
+                        <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full ${
+                          syncStatus.state === 'off' ? 'bg-slate-100 text-slate-400'
+                          : syncStatus.state === 'error' ? 'bg-rose-50 text-rose-500'
+                          : syncStatus.state === 'syncing' ? 'bg-trust-50 text-trust-600'
+                          : 'bg-emerald-50 text-emerald-600'}`}>
+                          {syncStatus.state === 'off' ? '연결 안 됨' : syncStatus.state === 'error' ? '오류' : syncStatus.state === 'syncing' ? '동기화 중' : '연결됨'}
+                        </span>
+                      </div>
+                      {syncStatus.state === 'off' ? (
+                        <div className="space-y-3">
+                          <p className="text-sm text-slate-500 leading-relaxed">
+                            부모폰과 아이 태블릿의 학습기록·별·쿠폰·설정·아이 이름을 맞춰요. Gemini 키는 기기마다 따로 입력해요.
+                          </p>
+                          <input type="url" className="input-field bg-slate-50" placeholder="웹 앱 URL (https://script.google.com/macros/s/.../exec)"
+                            value={syncUrlInput} onChange={(e) => setSyncUrlInput(e.target.value)} />
+                          <input type="text" className="input-field bg-slate-50" placeholder="가족 코드" autoCapitalize="off" autoCorrect="off"
+                            value={syncTokenInput} onChange={(e) => setSyncTokenInput(e.target.value)} />
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <button className="btn-secondary flex flex-col items-center py-3 disabled:opacity-50" disabled={syncBusy} onClick={() => connectDevice('upload')}>
+                              <span className="font-bold">이 기기 기준으로 시작</span>
+                              <span className="text-[10px] text-slate-400 font-medium">서버를 이 기기 데이터로 덮어써요</span>
+                            </button>
+                            <button className="btn-secondary flex flex-col items-center py-3 disabled:opacity-50" disabled={syncBusy} onClick={() => connectDevice('download')}>
+                              <span className="font-bold">서버 데이터 받기</span>
+                              <span className="text-[10px] text-slate-400 font-medium">이 기기 기록을 서버 것으로 바꿔요</span>
+                            </button>
+                          </div>
+                          {syncBusy && <p className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={12} className="animate-spin" />서버 확인 중…</p>}
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div className="text-sm text-slate-500">
+                            마지막 동기화: <strong className="text-slate-700">{syncStatus.lastAt ? new Date(syncStatus.lastAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—"}</strong>
+                            {syncStatus.pending > 0 && <span className="ml-2 text-amber-600">· 보낼 기록 {syncStatus.pending}건</span>}
+                          </div>
+                          {syncStatus.state === 'error' && syncStatus.error && (
+                            <p className="text-xs text-rose-500">{syncStatus.error}</p>
+                          )}
+                          <div className="flex gap-2">
+                            <button className="btn-secondary flex-1 flex items-center justify-center gap-2 disabled:opacity-50" disabled={syncBusy} onClick={syncNow}>
+                              <RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} />지금 동기화
+                            </button>
+                            <button className="btn-secondary px-4 text-slate-400" onClick={() => {
+                              if (window.confirm("이 기기의 동기화 연결을 해제할까요?\n(이 기기의 데이터는 그대로 남아요)")) { disconnectSync(); showToast("연결을 해제했어요"); }
+                            }}>연결 해제</button>
+                          </div>
+                        </div>
+                      )}
+                    </section>
 
                     <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4 opacity-60 hover:opacity-100 transition-opacity">
                       <div className="flex items-center gap-2 text-slate-900 font-bold mb-2">

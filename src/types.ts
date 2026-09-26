@@ -18,6 +18,8 @@ export interface LearningRecord {
   wrongExprs: string[];
   problems?: MathProblem[];
   answers?: {val: string, ok: boolean}[];
+  updatedAt?: number;   // 동기화: 마지막 수정 시각 (없으면 ts)
+  profileId?: string;   // 동기화: 프로필 (현재 'default' 하나)
 }
 
 export interface GradingResult {
