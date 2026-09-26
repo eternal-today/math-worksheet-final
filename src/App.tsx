@@ -20,11 +20,14 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   migrateLocal, startAutoSync, onSyncApplied, onSyncStatus, getSyncStatus, SyncStatus,
   markRecordDirty, markCouponUsed, touchConfig, touchPin, touchCelebrated,
-  checkServer, connectSync, runSync, disconnectSync, activeProfileId, getLastSyncInputs
+  checkServer, connectSync, runSync, disconnectSync, activeProfileId, getLastSyncInputs,
+  makeConnectLink, consumeConnectLink
 } from './sync';
 
 // 기존 기기 데이터 1회 이전 (사용한 쿠폰 목록 생성) — 첫 렌더 전에 실행
 migrateLocal();
+// 연결 링크로 열었으면 URL·가족 코드를 입력칸에 채워둠 (첫 렌더 전)
+const OPENED_WITH_CONNECT_LINK = consumeConnectLink();
 
 // ─────────────────────────────────────────────
 // 유틸: 천 단위 콤마
@@ -237,6 +240,9 @@ export default function App() {
     const offApplied = onSyncApplied(reloadFromStorage);
     const offStatus = onSyncStatus(setSyncStatus);
     startAutoSync();
+    if (OPENED_WITH_CONNECT_LINK && !getSyncStatus().lastAt) {
+      setTimeout(() => showToast("연결 정보를 받았어요! 부모님 화면 > 기기 동기화에서 연결해 주세요"), 600);
+    }
     return () => { offApplied(); offStatus(); };
   }, []);
 
@@ -258,6 +264,26 @@ export default function App() {
       showToast(e?.message || "연결에 실패했어요");
     } finally {
       setSyncBusy(false);
+    }
+  };
+
+  const shareConnectLink = async () => {
+    const link = makeConnectLink();
+    if (!link) return;
+    const nav: any = navigator;
+    try {
+      if (nav.share) {
+        await nav.share({ title: "우리집 수학 에이스 연결", text: "다른 기기에서 이 링크를 열면 동기화 정보가 채워져요", url: link });
+        return;
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return; // 공유 창을 닫음
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      showToast("연결 링크를 복사했어요. 다른 기기로 보내 주세요");
+    } catch {
+      window.prompt("아래 링크를 복사해서 다른 기기로 보내 주세요", link);
     }
   };
 
@@ -941,10 +967,11 @@ ${wrongSummary}
                           {syncStatus.state === 'error' && syncStatus.error && (
                             <p className="text-xs text-rose-500">{syncStatus.error}</p>
                           )}
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap gap-2">
                             <button className="btn-secondary flex-1 flex items-center justify-center gap-2 disabled:opacity-50" disabled={syncBusy} onClick={syncNow}>
                               <RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} />지금 동기화
                             </button>
+                            <button className="btn-secondary px-4" onClick={shareConnectLink}>연결 링크 보내기</button>
                             <button className="btn-secondary px-4 text-slate-400" onClick={() => {
                               if (window.confirm("이 기기의 동기화 연결을 해제할까요?\n(이 기기의 데이터는 그대로 남아요)")) {
                                 disconnectSync();

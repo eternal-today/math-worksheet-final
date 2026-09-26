@@ -141,6 +141,37 @@ export function getLastSyncInputs(): { url: string; token: string } {
     token: localStorage.getItem(K.token) || localStorage.getItem(K.lastToken) || '',
   };
 }
+// ─────────────────────────────────────────────
+// 연결 링크: 앱주소#connect=<base64(URL|코드)>
+//  - '#' 뒷부분은 서버로 전송되지 않음 (GitHub Pages 로그·카톡 미리보기에 안 남음)
+//  - 열면 입력칸에 채우고 주소창에서 즉시 제거
+// ─────────────────────────────────────────────
+const LINK_KEY = 'connect';
+
+export function makeConnectLink(): string | null {
+  const s = getSyncSettings();
+  if (!s) return null;
+  const payload = btoa(unescape(encodeURIComponent(`${s.url}|${s.token}`)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${location.origin}${location.pathname}#${LINK_KEY}=${payload}`;
+}
+
+/** 앱 시작 시 1회: 주소에 연결 링크가 있으면 입력칸 값으로 저장하고 주소에서 제거 */
+export function consumeConnectLink(): boolean {
+  try {
+    const m = location.hash.match(new RegExp(`${LINK_KEY}=([A-Za-z0-9_-]+)`));
+    if (!m) return false;
+    history.replaceState(null, '', location.pathname + location.search);
+    let b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const [url, token] = decodeURIComponent(escape(atob(b64))).split('|');
+    if (!/^https:\/\/script\.google\.com\//.test(url || '') || !token) return false;
+    localStorage.setItem(K.lastUrl, url);
+    localStorage.setItem(K.lastToken, token);
+    return true;
+  } catch { return false; }
+}
+
 export function disconnectSync() {
   const cur = getSyncSettings();
   if (cur) { localStorage.setItem(K.lastUrl, cur.url); localStorage.setItem(K.lastToken, cur.token); }
