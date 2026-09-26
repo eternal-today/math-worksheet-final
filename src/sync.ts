@@ -27,6 +27,8 @@ const K = {
   pinAt: 'pin_updated_at',
   url: 'sync_url',
   token: 'sync_token',
+  lastUrl: 'sync_last_url',       // 연결 해제·실패 후에도 입력칸에 채워둘 값
+  lastToken: 'sync_last_token',
   cursor: 'sync_cursor',
   pending: 'sync_pending',
   lastAt: 'sync_last_at',
@@ -132,7 +134,16 @@ export function getSyncSettings(): { url: string; token: string } | null {
   const token = localStorage.getItem(K.token) || '';
   return url && token ? { url, token } : null;
 }
+/** 입력칸 기본값: 현재 연결값 → 없으면 마지막으로 입력한 값 */
+export function getLastSyncInputs(): { url: string; token: string } {
+  return {
+    url: localStorage.getItem(K.url) || localStorage.getItem(K.lastUrl) || '',
+    token: localStorage.getItem(K.token) || localStorage.getItem(K.lastToken) || '',
+  };
+}
 export function disconnectSync() {
+  const cur = getSyncSettings();
+  if (cur) { localStorage.setItem(K.lastUrl, cur.url); localStorage.setItem(K.lastToken, cur.token); }
   [K.url, K.token, K.cursor, K.lastAt].forEach(k => localStorage.removeItem(k));
   setStatus({ state: 'off', error: '' });
 }
@@ -207,6 +218,8 @@ export type SyncMode = 'normal' | 'upload' | 'download';
 export async function connectSync(url: string, token: string, mode: 'upload' | 'download') {
   localStorage.setItem(K.url, url.trim());
   localStorage.setItem(K.token, token.trim());
+  localStorage.setItem(K.lastUrl, url.trim());
+  localStorage.setItem(K.lastToken, token.trim());
   localStorage.setItem(K.cursor, '0');
   try {
     await runSync(mode);

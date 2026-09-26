@@ -20,7 +20,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   migrateLocal, startAutoSync, onSyncApplied, onSyncStatus, getSyncStatus, SyncStatus,
   markRecordDirty, markCouponUsed, touchConfig, touchPin, touchCelebrated,
-  checkServer, connectSync, runSync, disconnectSync, activeProfileId
+  checkServer, connectSync, runSync, disconnectSync, activeProfileId, getLastSyncInputs
 } from './sync';
 
 // 기존 기기 데이터 1회 이전 (사용한 쿠폰 목록 생성) — 첫 렌더 전에 실행
@@ -206,8 +206,8 @@ export default function App() {
 
   // 동기화
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => getSyncStatus());
-  const [syncUrlInput, setSyncUrlInput] = useState("");
-  const [syncTokenInput, setSyncTokenInput] = useState("");
+  const [syncUrlInput, setSyncUrlInput] = useState(() => getLastSyncInputs().url);
+  const [syncTokenInput, setSyncTokenInput] = useState(() => getLastSyncInputs().token);
   const [syncBusy, setSyncBusy] = useState(false);
 
   const configAtRef = useRef(localStorage.getItem("config_updated_at") || "");
@@ -253,7 +253,6 @@ export default function App() {
         : `서버 데이터를 받아옵니다.\n\n이 기기의 기록 ${localCount}건·별·쿠폰을 지우고, 서버 기록 ${info.records}건으로 바꿉니다.\n(Gemini 키는 그대로 유지)\n\n계속할까요?`;
       if (!window.confirm(msg)) return;
       await connectSync(url, token, mode);
-      setSyncUrlInput(""); setSyncTokenInput("");
       showToast(mode === 'upload' ? "이 기기 기준으로 동기화를 시작했어요!" : "서버 데이터를 받아왔어요!");
     } catch (e: any) {
       showToast(e?.message || "연결에 실패했어요");
@@ -947,7 +946,12 @@ ${wrongSummary}
                               <RefreshCw size={16} className={syncBusy ? 'animate-spin' : ''} />지금 동기화
                             </button>
                             <button className="btn-secondary px-4 text-slate-400" onClick={() => {
-                              if (window.confirm("이 기기의 동기화 연결을 해제할까요?\n(이 기기의 데이터는 그대로 남아요)")) { disconnectSync(); showToast("연결을 해제했어요"); }
+                              if (window.confirm("이 기기의 동기화 연결을 해제할까요?\n(이 기기의 데이터는 그대로 남아요)")) {
+                                disconnectSync();
+                                const last = getLastSyncInputs();
+                                setSyncUrlInput(last.url); setSyncTokenInput(last.token);
+                                showToast("연결을 해제했어요");
+                              }
                             }}>연결 해제</button>
                           </div>
                         </div>
