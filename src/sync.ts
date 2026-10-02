@@ -213,24 +213,37 @@ const ERROR_TEXT: Record<string, string> = {
   unauthorized: '가족 코드가 맞지 않아요',
   busy: '서버가 바빠요. 잠시 후 다시 시도해요',
   bad_profile: '프로필 정보가 올바르지 않아요',
-  network: '인터넷 연결 또는 서버 URL을 확인해 주세요',
+  bad_json: '요청 형식 오류예요 (앱을 새로고침해 주세요)',
+  bad_action: '서버 스크립트가 예전 버전이에요 (GAS를 새 버전으로 다시 배포해 주세요)',
 };
 
+/** 원인을 구분해서 알려주는 오류 (화면에 그대로 표시) */
 async function post(url: string, body: object): Promise<any> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
+  const timer = setTimeout(() => ctrl.abort(), 90000);
+  let res: Response;
   try {
     // Content-Type을 지정하지 않으면 text/plain → CORS preflight 없이 GAS로 전달됨
-    const res = await fetch(url, { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal });
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'server');
-    return data;
+    res = await fetch(url, { method: 'POST', body: JSON.stringify(body), signal: ctrl.signal, redirect: 'follow' });
   } catch (e: any) {
-    const code = e?.message && ERROR_TEXT[e.message] ? e.message : (e?.name === 'SyntaxError' ? 'network' : e?.message);
-    throw new Error(ERROR_TEXT[code] || ERROR_TEXT.network);
-  } finally {
     clearTimeout(timer);
+    if (e?.name === 'AbortError') throw new Error('서버 응답이 90초 넘게 없어요. 잠시 후 다시 시도해 주세요');
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('인터넷에 연결되어 있지 않아요');
+    // 주소가 틀렸거나(404), 배포 권한이 "모든 사용자"가 아니면 브라우저가 응답을 차단함
+    throw new Error('서버에 닿지 못했어요. 웹 앱 URL에 오타가 없는지(붙여넣기 권장), 배포 액세스 권한이 "모든 사용자"인지 확인해 주세요');
   }
+  clearTimeout(timer);
+  const text = await res.text().catch(() => '');
+  let data: any;
+  try { data = JSON.parse(text); }
+  catch {
+    throw new Error(`서버가 엉뚱한 응답을 보냈어요 (HTTP ${res.status}). 웹 앱 URL이 /exec 로 끝나는지, 새 버전으로 배포했는지 확인해 주세요`);
+  }
+  if (!data.ok) {
+    const code = String(data.error || 'server');
+    throw new Error(ERROR_TEXT[code] || `서버 스크립트 오류: ${data.message || code}`);
+  }
+  return data;
 }
 
 /** 연결 전 확인: 서버에 이 프로필 기록이 몇 건 있는지 */

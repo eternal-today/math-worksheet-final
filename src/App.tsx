@@ -212,6 +212,12 @@ export default function App() {
   const [syncUrlInput, setSyncUrlInput] = useState(() => getLastSyncInputs().url);
   const [syncTokenInput, setSyncTokenInput] = useState(() => getLastSyncInputs().token);
   const [syncBusy, setSyncBusy] = useState(false);
+  const [syncConnectError, setSyncConnectError] = useState("");
+
+  // 보상 보기 (별·뱃지·쿠폰) + PIN 인증 후 실행할 동작
+  const [rewardsOpen, setRewardsOpen] = useState(false);
+  const pinActionRef = useRef<null | (() => void)>(null);
+  const [pinPurpose, setPinPurpose] = useState("");
 
   const configAtRef = useRef(localStorage.getItem("config_updated_at") || "");
   /** 동기화로 localStorage가 바뀌면 화면 상태를 다시 읽음 */
@@ -251,6 +257,8 @@ export default function App() {
     if (!/^https:\/\/script\.google\.com\//.test(url)) { showToast("웹 앱 URL을 확인해 주세요 (https://script.google.com/...)"); return; }
     if (!token) { showToast("가족 코드를 입력해 주세요"); return; }
     setSyncBusy(true);
+    setSyncConnectError("");
+    let stage = "연결 확인";
     try {
       const info = await checkServer(url, token);
       const localCount = records.length;
@@ -258,10 +266,13 @@ export default function App() {
         ? `이 기기를 기준으로 시작합니다.\n\n서버 기록 ${info.records}건을 지우고, 이 기기의 기록 ${localCount}건·별·쿠폰·설정으로 덮어씁니다.\n\n계속할까요?`
         : `서버 데이터를 받아옵니다.\n\n이 기기의 기록 ${localCount}건·별·쿠폰을 지우고, 서버 기록 ${info.records}건으로 바꿉니다.\n(Gemini 키는 그대로 유지)\n\n계속할까요?`;
       if (!window.confirm(msg)) return;
+      stage = mode === 'upload' ? "업로드" : "내려받기";
       await connectSync(url, token, mode);
       showToast(mode === 'upload' ? "이 기기 기준으로 동기화를 시작했어요!" : "서버 데이터를 받아왔어요!");
     } catch (e: any) {
-      showToast(e?.message || "연결에 실패했어요");
+      // 토스트는 금방 사라지므로 원인을 화면에 남겨둠
+      setSyncConnectError(`[${stage} 단계] ${e?.message || "연결에 실패했어요"}`);
+      showToast("연결에 실패했어요. 아래 안내를 확인해 주세요");
     } finally {
       setSyncBusy(false);
     }
@@ -385,7 +396,10 @@ export default function App() {
     setPinBuffer(newBuffer);
     if (newBuffer.length === 4) {
       if (newBuffer === parentPin) {
-        setPinOverlay(false); setPinBuffer(""); setScreen('parent');
+        setPinOverlay(false); setPinBuffer("");
+        const action = pinActionRef.current;
+        pinActionRef.current = null; setPinPurpose("");
+        if (action) action(); else setScreen('parent');
       } else {
         setPinError(true);
         setTimeout(() => { setPinBuffer(""); setPinError(false); }, 700);
@@ -456,6 +470,23 @@ export default function App() {
   };
 
   // 현재 문제 답에 필요한 특수키 (분수 /, 비율 :, 나머지 …, 소수 .)
+  // 다음 보상까지 남은 별 (홈·결과·보상 화면 공용)
+  const nextBadge = BADGES.find(b => stars < b.need) || null;
+  const nextCouponAt = stars < 50 ? 50 : Math.floor((stars - 50) / 100) * 100 + 150;
+  const nextHallAt = (Math.floor(stars / 100) + 1) * 100;
+  const nextGoals = [
+    ...(nextBadge ? [{ key: 'badge', emoji: '🏅', label: `뱃지 ‘${nextBadge.name}’`, at: nextBadge.need }] : []),
+    { key: 'coupon', emoji: '🎁', label: '소원 쿠폰', at: nextCouponAt },
+    { key: 'hall', emoji: '👑', label: '명예의 전당', at: nextHallAt },
+  ].sort((a, b) => a.at - b.at);
+  const nearestGoal = nextGoals[0];
+
+  const requestUseCoupon = (value: number) => {
+    pinActionRef.current = () => useWishCoupon(value);
+    setPinPurpose("쿠폰 사용은 부모님이 PIN으로 확인해요");
+    setPinOverlay(true);
+  };
+
   const specialKeys = (() => {
     const p = problems[curIdx];
     if (!p) return [];
@@ -957,6 +988,9 @@ ${wrongSummary}
                             </button>
                           </div>
                           {syncBusy && <p className="text-xs text-slate-400 flex items-center gap-1"><Loader2 size={12} className="animate-spin" />서버 확인 중…</p>}
+                          {syncConnectError && !syncBusy && (
+                            <p className="text-xs text-rose-500 leading-relaxed bg-rose-50 border border-rose-100 rounded-xl p-3 break-all">{syncConnectError}</p>
+                          )}
                         </div>
                       ) : (
                         <div className="space-y-3">
@@ -1138,20 +1172,25 @@ ${wrongSummary}
             {/* ── ready: 시작 선택 (스크롤 허용) ── */}
             {childPhase === 'ready' && (
               <div className="flex-1 overflow-y-auto p-6">
-                <header className="flex justify-between items-center mb-6 max-w-lg mx-auto w-full">
+                <header className="flex justify-between items-center mb-6 max-w-lg landscape:max-w-5xl mx-auto w-full">
                   <button onClick={() => setScreen('landing')}
                     className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                     <Home size={20} />
                   </button>
-                  <div className="bg-white px-5 py-2.5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
+                  <button onClick={() => setRewardsOpen(true)} aria-label="내 보상 보기"
+                    className="bg-white px-5 py-2.5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3 active:scale-95 transition-transform">
                     <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
                       <Star size={18} className="text-amber-500 fill-amber-500" />
                     </div>
                     <span className="font-black text-slate-700 text-lg font-display">{stars}</span>
-                  </div>
+                    <ChevronRight size={16} className="text-slate-300 -ml-1" />
+                  </button>
                 </header>
 
-                <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="w-full max-w-lg mx-auto space-y-8">
+                {/* 세로: 한 줄로 쌓기 / 가로: 왼쪽 풀기·채점 + 오른쪽 보상 */}
+                <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+                  className="w-full max-w-lg landscape:max-w-5xl mx-auto space-y-8 landscape:space-y-0 landscape:grid landscape:grid-cols-2 landscape:gap-8 landscape:items-start">
+                  <div className="space-y-8 landscape:space-y-6">
                   <div className="text-center space-y-2">
                     <motion.div animate={{ scale: [1, 1.15, 1] }} transition={{ duration: 2, repeat: Infinity }} className="text-brand-400 flex justify-center mb-1">
                       <Sparkles size={26} />
@@ -1164,7 +1203,7 @@ ${wrongSummary}
 
                   <div className="grid gap-4">
                     <motion.button whileTap={{ scale: 0.97 }}
-                      className="w-full bg-gradient-to-br from-brand-500 to-brand-600 p-8 rounded-[2rem] shadow-xl shadow-brand-200 flex flex-col items-center gap-4 group"
+                      className="w-full bg-gradient-to-br from-brand-500 to-brand-600 p-8 landscape:p-6 rounded-[2rem] shadow-xl shadow-brand-200 flex flex-col items-center gap-4 group"
                       onClick={startSolving}>
                       <div className="w-16 h-16 bg-white/25 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
                         <Calculator size={32} className="text-white" />
@@ -1207,35 +1246,63 @@ ${wrongSummary}
                     )}
                   </div>
 
-                  <div className="flex justify-center gap-4">
-                    {BADGES.map((b) => (
-                      <div key={b.id} title={b.name}
-                        className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${earnedBadges.includes(b.id) ? 'bg-brand-100 text-brand-600 shadow-sm' : 'bg-slate-100 text-slate-300'}`}>
-                        <BadgeIcon name={b.iconName} size={20} />
-                      </div>
-                    ))}
                   </div>
 
-                  {wishCoupons.length > 0 && (
-                    <div className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4">
-                      <div className="flex items-center justify-center gap-2 text-amber-600 font-black text-sm mb-2">🎁 내 소원 쿠폰 {wishCoupons.length}장</div>
-                      <p className="text-center text-[11px] text-amber-500">엄마·아빠에게 보여주고 소원을 말해보세요!</p>
+                  <div className="space-y-4">
+                  {/* 보상 요약 — 누르면 자세히 */}
+                  <button onClick={() => setRewardsOpen(true)}
+                    className="w-full bg-white rounded-[2rem] border border-slate-100 shadow-sm p-5 space-y-4 active:scale-[0.98] transition-transform text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="font-black text-slate-800">내 보상</span>
+                      <span className="text-xs font-bold text-brand-500 flex items-center">자세히 보기<ChevronRight size={14} /></span>
                     </div>
+                    <div className="flex justify-between gap-2">
+                      {BADGES.map((b) => {
+                        const got = earnedBadges.includes(b.id);
+                        return (
+                          <div key={b.id} className="flex flex-col items-center gap-1.5 flex-1 min-w-0">
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${got ? 'bg-brand-100 text-brand-600 shadow-sm' : 'bg-slate-100 text-slate-300'}`}>
+                              {got ? <BadgeIcon name={b.iconName} size={20} /> : <Lock size={16} />}
+                            </div>
+                            <span className={`text-[10px] font-bold ${got ? 'text-slate-600' : 'text-slate-300'}`}>⭐{b.need}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div>
+                      <div className="flex justify-between text-xs font-bold mb-1.5">
+                        <span className="text-slate-500">{nearestGoal.emoji} {nearestGoal.label}까지</span>
+                        <span className="text-amber-600">별 {nearestGoal.at - stars}개 남았어요</span>
+                      </div>
+                      <div className="bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                        <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (stars / nearestGoal.at) * 100)}%` }} />
+                      </div>
+                    </div>
+                  </button>
+
+                  {wishCoupons.length > 0 && (
+                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => setRewardsOpen(true)}
+                      className="w-full bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4">
+                      <div className="flex items-center justify-center gap-2 text-amber-600 font-black text-sm mb-1">🎁 내 소원 쿠폰 {wishCoupons.length}장</div>
+                      <p className="text-center text-[11px] text-amber-500">눌러서 쿠폰을 열고 엄마·아빠에게 보여주세요!</p>
+                    </motion.button>
                   )}
                   {stars >= 100 && (
-                    <div className="bg-gradient-to-br from-brand-500 to-brand-700 rounded-2xl p-4 text-center text-white shadow-lg">
+                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => setRewardsOpen(true)}
+                      className="w-full bg-gradient-to-br from-brand-500 to-brand-700 rounded-2xl p-4 text-center text-white shadow-lg">
                       <div className="text-2xl mb-1">👑</div>
                       <div className="font-black">명예의 전당</div>
                       <div className="text-xs opacity-90">별 {stars}개의 수학 마스터!</div>
-                    </div>
+                    </motion.button>
                   )}
+                  </div>
                 </motion.div>
               </div>
             )}
 
-            {/* ── solving: 스크롤 없는 3분할 고정 레이아웃 ── */}
+            {/* ── solving: 스크롤 없는 고정 레이아웃 (세로: 위아래 3분할 / 가로: 왼쪽 문제·힌트 + 오른쪽 키패드) ── */}
             {childPhase === 'solving' && problems[curIdx] && (
-              <div className="flex flex-col h-full max-w-2xl mx-auto w-full">
+              <div className="flex flex-col h-full max-w-2xl landscape:max-w-6xl mx-auto w-full">
                 {/* [상단 고정] 진행바 + 별 + 홈 */}
                 <div className="shrink-0 px-4 pt-4 pb-2">
                   <div className="flex items-center gap-3">
@@ -1259,8 +1326,9 @@ ${wrongSummary}
                   </div>
                 </div>
 
-                {/* [중앙 가변] 문제 카드 — 남는 공간 전부 차지, 내부 중앙정렬. 힌트는 오버레이. */}
-                <div className="flex-1 min-h-0 relative px-4 py-2 flex items-center justify-center">
+                <div className="flex-1 min-h-0 flex flex-col landscape:flex-row">
+                {/* [중앙 가변] 문제 카드 — 남는 공간 전부 차지. 힌트: 세로는 오버레이, 가로는 문제 아래 칸 */}
+                <div className="flex-1 min-h-0 min-w-0 relative px-4 py-2 landscape:pr-2 landscape:pb-4 flex items-center justify-center">
                   <div className="w-full bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 border border-slate-100 h-full flex flex-col items-center justify-center px-6 py-4 relative overflow-hidden">
                     <div className="absolute top-0 left-0 w-full h-1.5 bg-brand-500/10"></div>
 
@@ -1274,11 +1342,11 @@ ${wrongSummary}
                     {/* 문제식 + 답칸: 세로 배치, 화면 폭에 맞춰 자동 축소 */}
                     <AnimatePresence mode="wait">
                       <motion.div key={curIdx} initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }}
-                        className="flex flex-col items-center gap-4 w-full">
+                        className="shrink-0 flex flex-col landscape:flex-row landscape:flex-wrap items-center justify-center gap-4 landscape:gap-x-5 landscape:gap-y-3 w-full">
                         <div className="text-[clamp(1.75rem,7vw,3.25rem)] font-black text-slate-900 font-display tracking-tight text-center leading-tight break-keep">
                           {problems[curIdx].expr} <span className="text-brand-500">＝</span>
                         </div>
-                        <div className="relative w-full max-w-[280px]">
+                        <div className="relative w-full max-w-[280px] landscape:w-48 landscape:shrink-0">
                           <div className={`w-full text-center text-[clamp(2rem,9vw,3.5rem)] font-black font-display rounded-2xl py-2 px-3 border-b-4 transition-all min-h-[4rem] flex items-center justify-center ${
                             isAnsDisabled
                               ? (answers[curIdx]?.ok ? 'border-emerald-500 text-emerald-600 bg-emerald-50' : 'border-rose-500 text-rose-600 bg-rose-50')
@@ -1297,6 +1365,7 @@ ${wrongSummary}
                         </div>
 
                         {/* 정답/오답 캐릭터 피드백 */}
+                        <div className="landscape:basis-full flex justify-center empty:hidden">
                         <AnimatePresence>
                           {charFeedback && (
                             <motion.div initial={{ opacity: 0, y: 10, scale: 0.9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }}
@@ -1305,6 +1374,7 @@ ${wrongSummary}
                             </motion.div>
                           )}
                         </AnimatePresence>
+                        </div>
                       </motion.div>
                     </AnimatePresence>
 
@@ -1312,7 +1382,7 @@ ${wrongSummary}
                     <AnimatePresence>
                       {(hint || isHintLoading) && !isAnsDisabled && (
                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
-                          className="absolute inset-x-3 bottom-3 bg-amber-50 rounded-2xl border-2 border-amber-200 p-4 shadow-lg z-20 max-h-[70%] overflow-y-auto">
+                          className="absolute inset-x-3 bottom-3 bg-amber-50 rounded-2xl border-2 border-amber-200 p-4 shadow-lg z-20 max-h-[70%] overflow-y-auto landscape:relative landscape:inset-auto landscape:w-full landscape:max-h-none landscape:flex-1 landscape:min-h-0 landscape:mt-3 landscape:shadow-none">
                           <button onClick={() => setHint("")} className="absolute top-2 right-2 text-amber-400 hover:text-amber-600">
                             <X size={18} />
                           </button>
@@ -1343,23 +1413,23 @@ ${wrongSummary}
                   </div>
                 </div>
 
-                {/* [하단 고정] 키패드 + 버튼 */}
-                <div className="shrink-0 px-4 pb-4 pt-1 space-y-2">
+                {/* [하단 고정 / 가로: 오른쪽 열] 키패드 + 버튼 */}
+                <div className="shrink-0 px-4 pb-4 pt-1 space-y-2 landscape:w-[44%] landscape:max-w-lg landscape:pl-2 landscape:pt-2 landscape:flex landscape:flex-col landscape:justify-end">
                   {!isAnsDisabled && (
                     <>
-                      <div className="grid grid-cols-3 gap-1.5">
+                      <div className="grid grid-cols-3 gap-1.5 landscape:gap-2 landscape:flex-1 landscape:min-h-0 landscape:auto-rows-fr">
                         {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map(k => (
                           <button key={k} onClick={() => keypadPress(k)}
-                            className="bg-white border-2 border-slate-200 rounded-xl py-3 text-2xl font-black text-slate-800 shadow-sm active:scale-90 active:bg-brand-50 active:border-brand-300 transition-all">
+                            className="bg-white border-2 border-slate-200 rounded-xl py-3 landscape:py-0 landscape:min-h-9 text-2xl font-black text-slate-800 shadow-sm active:scale-90 active:bg-brand-50 active:border-brand-300 transition-all">
                             {k}
                           </button>
                         ))}
                         <button onClick={() => keypadPress("C")}
-                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 text-sm font-black text-slate-500 active:scale-90 transition-all">지우기</button>
+                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 landscape:py-0 text-sm font-black text-slate-500 active:scale-90 transition-all">지우기</button>
                         <button onClick={() => keypadPress("0")}
-                          className="bg-white border-2 border-slate-200 rounded-xl py-3 text-2xl font-black text-slate-800 shadow-sm active:scale-90 active:bg-brand-50 active:border-brand-300 transition-all">0</button>
+                          className="bg-white border-2 border-slate-200 rounded-xl py-3 landscape:py-0 landscape:min-h-9 text-2xl font-black text-slate-800 shadow-sm active:scale-90 active:bg-brand-50 active:border-brand-300 transition-all">0</button>
                         <button onClick={() => keypadPress("⌫")}
-                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 flex items-center justify-center text-slate-500 active:scale-90 transition-all">
+                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 landscape:py-0 flex items-center justify-center text-slate-500 active:scale-90 transition-all">
                           <Delete size={22} />
                         </button>
                       </div>
@@ -1367,7 +1437,7 @@ ${wrongSummary}
                         <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${specialKeys.length}, 1fr)` }}>
                           {specialKeys.map(k => (
                             <button key={k} onClick={() => keypadPress(k === "…" ? " … " : k)}
-                              className="bg-amber-50 border-2 border-amber-200 rounded-xl py-2.5 text-xl font-black text-amber-700 active:scale-90 transition-all">{k}</button>
+                              className="bg-amber-50 border-2 border-amber-200 rounded-xl py-2.5 text-xl font-black text-amber-700 active:scale-90 transition-all">{k === "…" ? <span className="text-base">나머지 <span className="text-xl">…</span></span> : k}</button>
                           ))}
                         </div>
                       )}
@@ -1386,6 +1456,7 @@ ${wrongSummary}
                       <span>정답 확인</span><ArrowRight size={22} />
                     </button>
                   </div>
+                </div>
                 </div>
               </div>
             )}
@@ -1425,7 +1496,7 @@ ${wrongSummary}
                         <div className="text-2xl font-black text-amber-500 font-display flex items-center justify-center gap-1">
                           <Star size={20} className="fill-amber-500" />{Math.floor(answers.filter(a => a.ok).length / 5)}
                         </div>
-                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">별 획득</div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">이번에 받은 별</div>
                       </div>
                       <div className="bg-slate-50 p-4 rounded-3xl">
                         <div className="text-2xl font-black text-orange-500 font-display flex items-center justify-center gap-1">
@@ -1434,6 +1505,27 @@ ${wrongSummary}
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">최고 콤보</div>
                       </div>
                     </div>
+
+                    {/* 전체 별 + 다음 목표 */}
+                    <button onClick={() => setRewardsOpen(true)}
+                      className="w-full bg-amber-50 border border-amber-100 rounded-3xl p-4 text-left active:scale-[0.98] transition-transform">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-amber-700">지금까지 모은 별</span>
+                        <span className="flex items-center gap-1.5 text-2xl font-black text-amber-600 font-display">
+                          <Star size={22} className="fill-amber-500 text-amber-500" />{stars}
+                          {Math.floor(answers.filter(a => a.ok).length / 5) > 0 && (
+                            <span className="text-xs font-black text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">+{Math.floor(answers.filter(a => a.ok).length / 5)}</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="bg-white h-2 rounded-full overflow-hidden mt-3">
+                        <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (stars / nearestGoal.at) * 100)}%` }} />
+                      </div>
+                      <p className="text-xs font-bold text-amber-600 mt-2">
+                        {nearestGoal.emoji} {nearestGoal.label}까지 별 {nearestGoal.at - stars}개 남았어요
+                        <span className="text-amber-400 font-medium"> · 5문제 맞힐 때마다 별 1개</span>
+                      </p>
+                    </button>
 
                     {/* AI 피드백을 상단에 크게 (정성 피드백 강조) */}
                     <AnimatePresence>
@@ -1455,7 +1547,7 @@ ${wrongSummary}
                     <div className="space-y-3 text-left">
                       <div className="flex items-center justify-between">
                         <h4 className="text-sm font-bold text-slate-900">상세 결과 (부모님이 수정할 수 있어요)</h4>
-                        <span className="text-[10px] text-slate-400 font-bold uppercase">Tap to Toggle</span>
+                        <span className="text-[10px] text-slate-400 font-bold">누르면 정답·오답이 바뀌어요</span>
                       </div>
                       <div className="grid gap-2 max-h-56 overflow-y-auto pr-1">
                         {problems.map((p, i) => (
@@ -1477,7 +1569,7 @@ ${wrongSummary}
 
                   <div className="flex gap-3 w-full pb-4">
                     <button className="btn-primary flex-1 py-5 text-lg flex items-center justify-center gap-2" onClick={startSolving}>
-                      <RotateCcw size={20} /><span>다시 풀기</span>
+                      <RotateCcw size={20} /><span>새 문제 풀기</span>
                     </button>
                     <button className="btn-secondary flex-1 py-5 text-lg flex items-center justify-center gap-2" onClick={() => setChildPhase('ready')}>
                       <Home size={20} /><span>홈으로</span>
@@ -1525,6 +1617,99 @@ ${wrongSummary}
       </AnimatePresence>
 
       <AnimatePresence>
+        {rewardsOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-6 print:hidden" onClick={() => setRewardsOpen(false)}>
+            <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }} transition={{ type: "spring", damping: 22 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white w-full max-w-lg max-h-[88vh] overflow-y-auto rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-6 shadow-2xl">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-xs font-bold text-slate-400">{config.childName?.trim() ? `${config.childName.trim()}의 보상` : "내 보상"}</div>
+                  <div className="flex items-center gap-2 text-4xl font-black text-slate-900 font-display mt-1">
+                    <Star size={32} className="fill-amber-400 text-amber-400" />{stars}<span className="text-base text-slate-400 font-bold">개</span>
+                  </div>
+                  <p className="text-xs text-slate-400 font-medium mt-1">5문제 맞힐 때마다 별 1개를 받아요</p>
+                </div>
+                <button onClick={() => setRewardsOpen(false)} aria-label="닫기"
+                  className="w-10 h-10 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center active:scale-90"><X size={20} /></button>
+              </div>
+
+              {/* 다음 목표 */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-black text-slate-800">다음 목표</h4>
+                {nextGoals.map(g => (
+                  <div key={g.key}>
+                    <div className="flex justify-between text-xs font-bold mb-1">
+                      <span className="text-slate-600">{g.emoji} {g.label} <span className="text-slate-300">· 별 {g.at}개</span></span>
+                      <span className="text-amber-600">{g.at - stars}개 남음</span>
+                    </div>
+                    <div className="bg-slate-100 h-2.5 rounded-full overflow-hidden">
+                      <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (stars / g.at) * 100)}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 소원 쿠폰 */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-black text-slate-800">소원 쿠폰</h4>
+                {wishCoupons.length === 0 ? (
+                  <p className="text-xs text-slate-400 font-medium bg-slate-50 rounded-2xl p-4">
+                    아직 쿠폰이 없어요. 별 {nextCouponAt}개를 모으면 소원 쿠폰을 받아요!
+                  </p>
+                ) : wishCoupons.map(v => (
+                  <div key={v} className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4 flex items-center gap-3">
+                    <div className="text-3xl">🎁</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-black text-amber-700">소원 쿠폰</div>
+                      <div className="text-[11px] font-bold text-amber-500">별 {v}개 달성 기념 · 엄마·아빠에게 소원 하나!</div>
+                    </div>
+                    <button onClick={() => requestUseCoupon(v)}
+                      className="shrink-0 bg-amber-500 text-white text-xs font-black px-3 py-2.5 rounded-xl active:scale-90 transition-transform flex items-center gap-1">
+                      <Lock size={12} />사용하기
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* 뱃지 */}
+              <div className="space-y-3">
+                <h4 className="text-sm font-black text-slate-800">뱃지 {earnedBadges.length}/{BADGES.length}</h4>
+                <div className="grid gap-2">
+                  {BADGES.map(b => {
+                    const got = earnedBadges.includes(b.id);
+                    return (
+                      <div key={b.id} className={`flex items-center gap-3 p-3 rounded-2xl border ${got ? 'bg-brand-50 border-brand-100' : 'bg-slate-50 border-slate-100'}`}>
+                        <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${got ? 'bg-brand-100 text-brand-600' : 'bg-slate-100 text-slate-300'}`}>
+                          {got ? <BadgeIcon name={b.iconName} size={20} /> : <Lock size={16} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className={`font-black text-sm ${got ? 'text-slate-800' : 'text-slate-400'}`}>{b.name}</div>
+                          <div className="text-[11px] font-bold text-slate-400">별 {b.need}개 모으기</div>
+                        </div>
+                        {got
+                          ? <CheckCircle2 size={20} className="text-emerald-500 shrink-0" />
+                          : <span className="text-[11px] font-black text-amber-600 shrink-0">{Math.max(0, b.need - stars)}개 남음</span>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {stars >= 100 && (
+                <div className="bg-gradient-to-br from-brand-500 to-brand-700 rounded-2xl p-5 text-center text-white">
+                  <div className="text-3xl mb-1">👑</div>
+                  <div className="font-black">명예의 전당 입성</div>
+                  <div className="text-xs opacity-90 mt-1">별 100개를 넘긴 수학 마스터예요!</div>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {pinOverlay && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6 print:hidden">
@@ -1532,7 +1717,7 @@ ${wrongSummary}
               className="bg-white rounded-[2.5rem] p-10 w-full max-w-xs text-center shadow-2xl">
               <div className="w-16 h-16 bg-slate-100 rounded-2xl mx-auto mb-6 flex items-center justify-center"><Lock size={28} className="text-slate-400" /></div>
               <h3 className="text-xl font-black text-slate-900 mb-2 font-display">부모님 인증</h3>
-              <p className="text-sm text-slate-400 mb-8 font-medium">PIN 번호 4자리를 입력하세요</p>
+              <p className="text-sm text-slate-400 mb-8 font-medium">{pinPurpose || "PIN 번호 4자리를 입력하세요"}</p>
               <div className="flex justify-center gap-4 mb-10">
                 {[0, 1, 2, 3].map(i => (
                   <div key={i} className={`w-4 h-4 rounded-full border-2 transition-all ${pinBuffer.length > i ? 'bg-trust-600 border-trust-600 scale-110' : 'border-slate-200'}`}></div>
@@ -1542,7 +1727,7 @@ ${wrongSummary}
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
                   <button key={n} className="h-14 bg-slate-50 hover:bg-slate-100 rounded-2xl text-xl font-black text-slate-700 transition-colors active:scale-90" onClick={() => handlePinInput(n)}>{n}</button>
                 ))}
-                <button className="h-14 flex items-center justify-center text-slate-300 hover:text-slate-500 transition-colors" onClick={() => setPinOverlay(false)}><X size={24} /></button>
+                <button className="h-14 flex items-center justify-center text-slate-300 hover:text-slate-500 transition-colors" onClick={() => { setPinOverlay(false); setPinBuffer(""); pinActionRef.current = null; setPinPurpose(""); }}><X size={24} /></button>
                 <button className="h-14 bg-slate-50 hover:bg-slate-100 rounded-2xl text-xl font-black text-slate-700 transition-colors active:scale-90" onClick={() => handlePinInput(0)}>0</button>
                 <button className="h-14 flex items-center justify-center text-slate-300 hover:text-slate-500 transition-colors" onClick={() => setPinBuffer(pinBuffer.slice(0, -1))}><Delete size={20} /></button>
               </div>
