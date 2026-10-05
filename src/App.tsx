@@ -21,7 +21,8 @@ import {
   migrateLocal, startAutoSync, onSyncApplied, onSyncStatus, getSyncStatus, SyncStatus,
   markRecordDirty, markCouponUsed, touchConfig, touchPin, touchCelebrated,
   checkServer, connectSync, runSync, disconnectSync, activeProfileId, getLastSyncInputs,
-  makeConnectLink, consumeConnectLink
+  makeConnectLink, consumeConnectLink,
+  getPendingSheets, createPrintedSheet, markSheetGraded, PrintedSheet
 } from './sync';
 
 // 기존 기기 데이터 1회 이전 (사용한 쿠폰 목록 생성) — 첫 렌더 전에 실행
@@ -94,7 +95,7 @@ const Toast = ({ message, show }: { message: string, show: boolean }) => (
 );
 
 // 인쇄용 학습지 (기존 유지, 콤마만 정답 표시에 반영 안 함 — 문제식은 콤마 없이 그대로)
-const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[] }>(({ problems }, ref) => (
+const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[]; code?: string }>(({ problems, code }, ref) => (
   <div ref={ref} className="print-worksheet hidden print:block bg-white p-8 font-sans text-slate-900 w-full">
     <div className="flex justify-between items-end border-b-4 border-slate-900 pb-6 mb-10">
       <div>
@@ -102,7 +103,7 @@ const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[] }>(({ 
         <div className="flex gap-8 text-sm font-bold text-slate-600">
           <div className="flex items-center gap-2">
             <span className="text-slate-400">날짜:</span>
-            <span className="border-b border-slate-300 w-40 inline-block text-center">2026년 __월 __일</span>
+            <span className="border-b border-slate-300 w-40 inline-block text-center">{new Date().getFullYear()}년 __월 __일</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-slate-400">이름:</span>
@@ -110,6 +111,12 @@ const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[] }>(({ 
           </div>
         </div>
       </div>
+      {code && (
+        <div className="text-center px-5 py-2 border-2 border-slate-900 rounded-2xl">
+          <div className="text-[10px] font-black text-slate-500 tracking-widest">시험지 번호</div>
+          <div className="text-4xl font-black font-mono tracking-[0.15em] text-slate-900">{code}</div>
+        </div>
+      )}
       <div className="text-right">
         <div className="text-[10px] font-black text-slate-300 uppercase tracking-[0.2em] mb-1">Math Ace Learning</div>
         <div className="w-24 h-24 border-2 border-slate-200 rounded-2xl flex flex-col items-center justify-center bg-slate-50/50">
@@ -193,7 +200,12 @@ export default function App() {
   const [isGrading, setIsGrading] = useState(false);
   const [isHintLoading, setIsHintLoading] = useState(false);
   const [gradingError, setGradingError] = useState(false);
-  const [printedProblems, setPrintedProblems] = useState<MathProblem[]>([]);
+  // 인쇄한 시험지 (채점 대기) — 기기에 저장되고 동기화로 다른 기기와 공유됨
+  const [sheets, setSheets] = useState<PrintedSheet[]>(() => getPendingSheets());
+  const [selectedSheetId, setSelectedSheetId] = useState<number | null>(null);
+  const [sheetPickerOpen, setSheetPickerOpen] = useState(false);
+  const [printSheet, setPrintSheet] = useState<PrintedSheet | null>(null);
+  const activeSheet = sheets.find(sh => sh.id === selectedSheetId) || sheets[0] || null;
   const lastImageRef = useRef<{ base64: string; mime: string } | null>(null);
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
@@ -240,6 +252,7 @@ export default function App() {
       } catch { }
     }
     setParentPin(localStorage.getItem("parent_pin") || "1234");
+    setSheets(getPendingSheets());
   };
 
   useEffect(() => {
@@ -435,7 +448,6 @@ export default function App() {
     if (config.unitIds.length === 0) { showToast("부모님 설정에서 단원을 먼저 선택해주세요!"); return; }
     const newProblems = makeProblems(config.unitIds, config.difficulty, config.count);
     setProblems(newProblems);
-    setPrintedProblems([]); // 화면 풀이 시작 → 종이 채점 대상 해제
     setAnswers([]);
     setCurIdx(0);
     setChildPhase('solving');
@@ -696,44 +708,67 @@ ${wrongSummary}
     }
   };
 
-  const getGradingTarget = (): MathProblem[] => {
-    if (printedProblems.length > 0) return printedProblems;
-    if (problems.length > 0) return problems;
-    return [];
-  };
+  const sheetLabel = (sh: PrintedSheet) =>
+    `${new Date(sh.id).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 인쇄`;
 
-  const runGrading = async (base64: string, mime: string) => {
-    const target = getGradingTarget();
-    if (target.length === 0) { showToast("먼저 문제를 인쇄하거나 화면에서 풀어주세요!"); return; }
+  /**
+   * 사진 채점. 채점 대상은 "인쇄할 때 저장해 둔 시험지"라서 어느 기기에서 찍어도 됨.
+   * 사진 속 시험지 번호가 고른 시험지와 다르면 맞는 시험지로 자동 전환.
+   */
+  const runGrading = async (base64: string, mime: string, sheetArg?: PrintedSheet, allowSwitch = true) => {
+    const sheet = sheetArg || activeSheet;
+    if (!sheet) { showToast("채점할 시험지가 없어요. 부모님 화면에서 학습지를 먼저 인쇄해 주세요!"); return; }
     if (!config.geminiKey) { showToast("AI 채점은 부모님 설정에서 API 키 등록 후 사용할 수 있어요."); return; }
+    const target = sheet.problems;
     setIsGrading(true);
     setGradingError(false);
     lastImageRef.current = { base64, mime };
+    let switchTo: PrintedSheet | null = null;
     try {
-      const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${target.map((p, i) => `${i + 1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n결과를 JSON으로만 줘 (다른 말 없이): { "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 따뜻하고 신나는 전체 피드백. 틀린 게 있으면 어떤 실수인지 부드럽게 짚어주고 뭘 더 연습하면 좋을지 한 가지 알려줘 (반말, 이모지)" }`;
+      const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${target.map((p, i) => `${i + 1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n학습지 위쪽에 인쇄된 "시험지 번호"(숫자 4자리)도 읽어줘. 안 보이면 빈 문자열.\n결과를 JSON으로만 줘 (다른 말 없이): { "sheetCode": string, "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 따뜻하고 신나는 전체 피드백. 틀린 게 있으면 어떤 실수인지 부드럽게 짚어주고 뭘 더 연습하면 좋을지 한 가지 알려줘 (반말, 이모지)" }`;
       const text = await callGemini({
         apiKey: config.geminiKey, prompt,
         imageBase64: base64, imageMime: mime,
         jsonMode: true, thinkingBudget: 512,
       });
-      const data = safeParseJSON<{ corrections: { ok: boolean; userVal: string }[]; feedback: string }>(text);
+      const data = safeParseJSON<{ sheetCode?: string; corrections: { ok: boolean; userVal: string }[]; feedback: string }>(text);
       if (!data || !Array.isArray(data.corrections) || data.corrections.length === 0) {
         throw new Error("채점 결과를 읽지 못했습니다.");
       }
-      const gradedAnswers = target.map((_, i) => {
-        const cc = data.corrections[i];
-        return cc ? { val: String(cc.userVal ?? ""), ok: !!cc.ok } : { val: "", ok: false };
-      });
-      setProblems(target);
-      setAnswers(gradedAnswers);
-      setCombo(0);
-      setMaxCombo(0);
-      finishSolving(gradedAnswers, data.feedback, target);
+      // 사진 속 번호 확인: 다른 시험지면 그 시험지로 다시 채점, 목록에 없으면 중단
+      const seen = String(data.sheetCode ?? "").replace(/\D/g, "");
+      if (seen.length === 4 && seen !== sheet.code) {
+        const other = getPendingSheets().find(sh => sh.code === seen);
+        if (other && allowSwitch) { switchTo = other; }
+        else {
+          showToast(`사진의 시험지(${seen}번)가 채점 대기 목록에 없어요. 이미 채점했거나 아직 동기화되지 않았어요.`);
+          return;
+        }
+      }
+      if (!switchTo) {
+        const gradedAnswers = target.map((_, i) => {
+          const cc = data.corrections[i];
+          return cc ? { val: String(cc.userVal ?? ""), ok: !!cc.ok } : { val: "", ok: false };
+        });
+        setProblems(target);
+        setAnswers(gradedAnswers);
+        setCombo(0);
+        setMaxCombo(0);
+        markSheetGraded(sheet.id);
+        setSheets(getPendingSheets());
+        setSelectedSheetId(null);
+        finishSolving(gradedAnswers, data.feedback, target);
+      }
     } catch {
       setGradingError(true);
       showToast("채점에 실패했어요. 다시 시도하거나 더 밝게 찍어주세요.");
     } finally {
-      setIsGrading(false);
+      if (!switchTo) setIsGrading(false);
+    }
+    if (switchTo) {
+      setSelectedSheetId(switchTo.id);
+      showToast(`시험지 ${switchTo.code}번으로 채점할게요`);
+      await runGrading(base64, mime, switchTo, false);
     }
   };
 
@@ -934,13 +969,16 @@ ${wrongSummary}
                       <Printer size={18} className="text-trust-600" /><h3>종이 학습지 생성</h3>
                     </div>
                     <p className="text-sm text-slate-500 leading-relaxed">
-                      현재 설정된 단원의 문제를 종이 학습지로 인쇄할 수 있습니다. 큰 자릿수 계산은 연습장에 세로셈으로 풀면 좋아요.
+                      현재 설정된 단원의 문제를 종이 학습지로 인쇄할 수 있습니다. 인쇄한 시험지는 번호와 함께 저장되어, 동기화된 다른 기기에서도 사진으로 채점할 수 있어요. 큰 자릿수 계산은 연습장에 세로셈으로 풀면 좋아요.
                     </p>
                     <button className="btn-secondary w-full flex items-center justify-center gap-2" onClick={() => {
                       if (config.unitIds.length === 0) { showToast("단원을 먼저 선택해주세요!"); return; }
                       const p = makeProblems(config.unitIds, config.difficulty, config.count);
-                      setProblems(p); setPrintedProblems(p);
-                      setTimeout(() => handlePrint(), 100);
+                      const sheet = createPrintedSheet(p);   // 저장 + 다른 기기로 동기화
+                      setPrintSheet(sheet);
+                      setSheets(getPendingSheets());
+                      setSelectedSheetId(sheet.id);
+                      setTimeout(() => handlePrint(), 150);
                     }}>
                       <Printer size={18} />학습지 인쇄하기
                     </button>
@@ -1233,11 +1271,19 @@ ${wrongSummary}
                       )}
                     </div>
 
-                    {printedProblems.length > 0 && !isGrading && (
-                      <div className="text-center text-xs text-emerald-600 font-bold bg-emerald-50 py-2 px-3 rounded-xl">
-                        📄 인쇄한 {printedProblems.length}문제를 채점할 준비가 됐어요
+                    {!isGrading && (activeSheet ? (
+                      <div className="flex items-center gap-2 text-xs font-bold bg-emerald-50 text-emerald-700 py-2.5 px-3 rounded-xl">
+                        <span className="flex-1 min-w-0 truncate">📄 시험지 <span className="font-mono text-sm">{activeSheet.code}</span>번 · {activeSheet.problems.length}문제 · {sheetLabel(activeSheet)}</span>
+                        {sheets.length > 1 && (
+                          <button onClick={() => setSheetPickerOpen(true)}
+                            className="shrink-0 bg-white border border-emerald-200 text-emerald-700 px-2.5 py-1 rounded-lg active:scale-95">다른 시험지 ({sheets.length})</button>
+                        )}
                       </div>
-                    )}
+                    ) : (
+                      <div className="text-center text-xs text-slate-400 font-medium py-1">
+                        채점할 시험지가 없어요. 부모님 화면에서 학습지를 인쇄하면 여기에 나타나요.
+                      </div>
+                    ))}
                     {gradingError && !isGrading && (
                       <button onClick={retryGrading}
                         className="w-full flex items-center justify-center gap-2 bg-rose-500 hover:bg-rose-600 text-white font-bold py-3 rounded-2xl transition-colors active:scale-[0.98]">
@@ -1617,6 +1663,39 @@ ${wrongSummary}
       </AnimatePresence>
 
       <AnimatePresence>
+        {sheetPickerOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[90] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-6 print:hidden" onClick={() => setSheetPickerOpen(false)}>
+            <motion.div initial={{ y: 60, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 60, opacity: 0 }} transition={{ type: "spring", damping: 22 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white w-full max-w-lg max-h-[80vh] overflow-y-auto rounded-t-[2rem] sm:rounded-[2rem] p-6 space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-black text-slate-900">어떤 시험지를 채점할까요?</h3>
+                  <p className="text-xs text-slate-400 font-medium mt-0.5">종이 위쪽에 적힌 시험지 번호를 확인해요</p>
+                </div>
+                <button onClick={() => setSheetPickerOpen(false)} aria-label="닫기"
+                  className="w-10 h-10 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center active:scale-90"><X size={20} /></button>
+              </div>
+              <div className="grid gap-2">
+                {sheets.map(sh => (
+                  <button key={sh.id} onClick={() => { setSelectedSheetId(sh.id); setSheetPickerOpen(false); }}
+                    className={`w-full flex items-center gap-4 p-4 rounded-2xl border-2 text-left active:scale-[0.98] transition-all ${activeSheet?.id === sh.id ? 'border-brand-400 bg-brand-50' : 'border-slate-100 bg-slate-50'}`}>
+                    <div className="text-2xl font-black font-mono text-slate-800 w-16 text-center">{sh.code}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-black text-slate-700">{sh.problems.length}문제 · {sheetLabel(sh)}</div>
+                      <div className="text-[11px] font-medium text-slate-400 truncate">{sh.unitNames.join(", ")}</div>
+                    </div>
+                    {activeSheet?.id === sh.id && <CheckCircle2 size={20} className="text-brand-500 shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {rewardsOpen && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-[90] bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-6 print:hidden" onClick={() => setRewardsOpen(false)}>
@@ -1737,7 +1816,7 @@ ${wrongSummary}
         )}
       </AnimatePresence>
 
-      <WorksheetPrint ref={printRef} problems={problems} />
+      <WorksheetPrint ref={printRef} problems={printSheet ? printSheet.problems : problems} code={printSheet?.code} />
     </div>
   );
 }

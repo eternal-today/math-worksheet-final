@@ -9,7 +9,7 @@
  *  - profileId: 지금은 'default' 하나. 프로필 기능을 붙일 때 서버 쪽은 그대로 쓰면 됨
  */
 import { BADGES } from './constants';
-import { LearningRecord } from './types';
+import { LearningRecord, MathProblem } from './types';
 
 // ─────────────────────────────────────────────
 // localStorage 키
@@ -31,6 +31,8 @@ const K = {
   lastToken: 'sync_last_token',
   cursor: 'sync_cursor',
   pending: 'sync_pending',
+  sheets: 'printed_sheets',            // 인쇄한 시험지 (채점 전까지 보관)
+  pendingSheets: 'sync_pending_sheets',
   lastAt: 'sync_last_at',
   profile: 'profile_id',
 } as const;
@@ -94,6 +96,19 @@ export function migrateLocal() {
  * (축하는 기록을 만든 기기에서 이미 했음) → 쿠폰도 빠짐없이 발급됨
  */
 export function reconcileLocal() {
+  // 시험지가 학습기록에 섞여 들어왔으면(예전 버전 앱이 받아둔 경우) 시험지 보관함으로 옮김
+  const recMap = readJSON<Record<string, any>>(K.records, {});
+  const stray = Object.keys(recMap).filter(k => recMap[k]?.kind === 'sheet');
+  if (stray.length) {
+    const sheets = readSheets();
+    for (const k of stray) {
+      const sh = recordToSheet(recMap[k]);
+      if (!sheets[sh.id] || sh.updatedAt > sheets[sh.id].updatedAt) sheets[sh.id] = sh;
+      delete recMap[k];
+    }
+    writeJSON(K.sheets, pruneSheets(sheets));
+    writeJSON(K.records, recMap);
+  }
   const records = Object.values(readJSON<Record<string, LearningRecord>>(K.records, {}));
   const stars = starsFromRecords(records);
   const celebrated = readJSON<number[]>(K.celebrated, []);
@@ -107,6 +122,91 @@ export function reconcileLocal() {
   writeJSON(K.celebrated, celebratedU);
   writeJSON(K.wishCoupons, wishCouponsFrom(celebratedU, used));
   writeJSON(K.badges, badges);
+}
+
+// ─────────────────────────────────────────────
+// 인쇄한 시험지
+//  - 인쇄할 때 문제·정답을 저장 → 어느 기기에서든 그 시험지를 골라 사진 채점
+//  - 서버에는 학습기록과 같은 통로로 보냄 (kind:'sheet', ts = 시험지 id) → GAS 수정 불필요
+//  - 채점이 끝나면 graded 표시, 채점 완료·30일 지난 시험지는 기기에서 정리
+// ─────────────────────────────────────────────
+export interface PrintedSheet {
+  id: number;            // 인쇄 시각(ms)
+  code: string;          // 종이에 찍히는 4자리 번호
+  problems: MathProblem[];
+  unitNames: string[];
+  graded?: boolean;
+  updatedAt: number;
+}
+const SHEET_KEEP_MS = 30 * 24 * 60 * 60 * 1000;
+
+function readSheets(): Record<string, PrintedSheet> { return readJSON<Record<string, PrintedSheet>>(K.sheets, {}); }
+function pruneSheets(all: Record<string, PrintedSheet>) {
+  const now = Date.now();
+  for (const k of Object.keys(all)) {
+    const sh = all[k];
+    if (!sh || sh.graded || now - sh.id > SHEET_KEEP_MS) delete all[k];
+  }
+  return all;
+}
+function markSheetDirty(id: number) {
+  const p = readJSON<number[]>(K.pendingSheets, []);
+  if (!p.includes(id)) { p.push(id); writeJSON(K.pendingSheets, p); }
+  scheduleSync();
+}
+
+/** 채점 대기 중인 시험지 (최근 인쇄 순) */
+export function getPendingSheets(): PrintedSheet[] {
+  return Object.values(pruneSheets(readSheets())).sort((a, b) => b.id - a.id);
+}
+
+export function createPrintedSheet(problems: MathProblem[]): PrintedSheet {
+  const all = readSheets();
+  const used = new Set(Object.values(all).map(sh => sh.code));
+  let code = '';
+  do { code = String(1000 + Math.floor(Math.random() * 9000)); } while (used.has(code));
+  // 두 기기가 같은 순간에 인쇄해도 겹치지 않게 1초 안에서 흩뜨림
+  let id = Date.now() + Math.floor(Math.random() * 1000);
+  while (all[id]) id++;
+  const sheet: PrintedSheet = {
+    id, code, problems,
+    unitNames: Array.from(new Set(problems.map(p => p.unitName))),
+    updatedAt: Date.now(),
+  };
+  all[id] = sheet;
+  writeJSON(K.sheets, all);
+  markSheetDirty(id);
+  return sheet;
+}
+
+export function markSheetGraded(id: number) {
+  const all = readSheets();
+  const sh = all[id];
+  if (!sh) return;
+  // 서버에는 graded 표시를 보내야 하므로 대기열에 올릴 사본을 따로 둠
+  const done = { ...sh, graded: true, updatedAt: Math.max(Date.now(), sh.updatedAt + 1) };
+  const outbox = readJSON<Record<string, PrintedSheet>>(K.sheets + '_outbox', {});
+  outbox[id] = done;
+  writeJSON(K.sheets + '_outbox', outbox);
+  delete all[id];
+  writeJSON(K.sheets, all);
+  markSheetDirty(id);
+}
+
+/** 시험지 ↔ 서버 기록 형태 변환 */
+function sheetToRecord(sh: PrintedSheet, profileId: string): any {
+  return {
+    kind: 'sheet', ts: sh.id, updatedAt: sh.updatedAt, profileId,
+    date: new Date(sh.id).toLocaleDateString('ko-KR') + ' 인쇄',
+    correct: 0, total: 0, unitNames: sh.unitNames, wrongExprs: [],
+    code: sh.code, graded: !!sh.graded, problems: sh.graded ? [] : sh.problems,
+  };
+}
+function recordToSheet(r: any): PrintedSheet {
+  return {
+    id: r.ts, code: String(r.code || ''), problems: Array.isArray(r.problems) ? r.problems : [],
+    unitNames: r.unitNames || [], graded: !!r.graded, updatedAt: r.updatedAt || r.ts,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -304,6 +404,7 @@ async function doSync(mode: SyncMode) {
   if (mode === 'upload') {
     reconcileLocal();
     writeJSON(K.pending, Object.values(records).map(r => r.ts));
+    writeJSON(K.pendingSheets, Object.keys(readSheets()).map(Number));
     const now = Date.now();
     if (!readNum(K.configAt) && localStorage.getItem(K.config)) localStorage.setItem(K.configAt, String(now));
     if (!readNum(K.pinAt) && localStorage.getItem(K.pin)) localStorage.setItem(K.pinAt, String(now));
@@ -319,6 +420,18 @@ async function doSync(mode: SyncMode) {
     const withMeta: LearningRecord = { ...r, profileId, updatedAt: recUpdatedAt(r) };
     outRecords.push(withMeta);
     sent.set(ts, withMeta.updatedAt!);
+  }
+  // 보낼 시험지 (새로 인쇄했거나 채점을 마친 것)
+  const sheetStore = readSheets();
+  const sheetOutbox = readJSON<Record<string, PrintedSheet>>(K.sheets + '_outbox', {});
+  const sentSheets = new Map<number, number>();
+  if (!fresh) {
+    for (const id of readJSON<number[]>(K.pendingSheets, [])) {
+      const sh = sheetOutbox[id] || sheetStore[id];
+      if (!sh) continue;
+      outRecords.push(sheetToRecord(sh, profileId));
+      sentSheets.set(id, sh.updatedAt);
+    }
   }
   const body: any = {
     action: 'sync',
@@ -348,17 +461,27 @@ async function doSync(mode: SyncMode) {
 
   // ── 응답 반영 (동기 구간: 이 사이에 다른 쓰기가 끼어들지 않음) ──
   if (fresh) {
-    [K.records, K.stars, K.badges, K.wishCoupons, K.celebrated, K.pending, K.configAt, K.pinAt]
+    [K.records, K.stars, K.badges, K.wishCoupons, K.celebrated, K.pending, K.configAt, K.pinAt,
+      K.sheets, K.pendingSheets, K.sheets + '_outbox']
       .forEach(k => localStorage.removeItem(k));
     writeJSON(K.usedCoupons, []);
   }
   const cur = readJSON<Record<string, LearningRecord>>(K.records, {});
-  for (const r of (res.records || []) as LearningRecord[]) {
+  const curSheets = readSheets();
+  const outboxNow = readJSON<Record<string, PrintedSheet>>(K.sheets + '_outbox', {});
+  for (const r of (res.records || []) as any[]) {
     if (!r || typeof r.ts !== 'number') continue;
+    if (r.kind === 'sheet') {
+      const sh = recordToSheet(r);
+      const localAt = Math.max(curSheets[sh.id]?.updatedAt || 0, outboxNow[sh.id]?.updatedAt || 0);
+      if (sh.updatedAt > localAt || (!curSheets[sh.id] && !outboxNow[sh.id])) curSheets[sh.id] = sh;
+      continue;
+    }
     const local = cur[r.ts];
     if (!local || recUpdatedAt(r) > recUpdatedAt(local)) cur[r.ts] = r;
   }
   writeJSON(K.records, cur);
+  writeJSON(K.sheets, pruneSheets(curSheets));
 
   const st = res.state || {};
   writeJSON(K.usedCoupons, uniqSorted([...readJSON<number[]>(K.usedCoupons, []), ...(st.usedCoupons || [])]));
@@ -382,6 +505,20 @@ async function doSync(mode: SyncMode) {
     return s === undefined || !r || recUpdatedAt(r) !== s;
   });
   writeJSON(K.pending, stillPending);
+
+  // 시험지 대기열 정리 (보낸 뒤 바뀌지 않은 것만 제거, 채점 완료 사본은 폐기)
+  const sheetsAfter = readSheets();
+  const outboxAfter = readJSON<Record<string, PrintedSheet>>(K.sheets + '_outbox', {});
+  const stillPendingSheets = readJSON<number[]>(K.pendingSheets, []).filter(id => {
+    const s = sentSheets.get(id);
+    const now = outboxAfter[id] || sheetsAfter[id];
+    if (s === undefined) return !!now;
+    if (now && now.updatedAt !== s) return true;
+    delete outboxAfter[id];
+    return false;
+  });
+  writeJSON(K.pendingSheets, stillPendingSheets);
+  writeJSON(K.sheets + '_outbox', outboxAfter);
 
   localStorage.setItem(K.cursor, String(res.seq || 0));
   localStorage.setItem(K.lastAt, String(Date.now()));
