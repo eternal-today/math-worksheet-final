@@ -69,6 +69,30 @@ interface Config {
 
 const MAX_COUNT = 50;
 
+/**
+ * 손가락이 닿는 순간 반응 (onClick은 손을 뗄 때라 빠른 연타에서 누락·지연됨).
+ * 키보드(Enter/Space)로 누른 경우만 onClick으로 처리해 두 번 실행되지 않게 함.
+ */
+function tap(fn: () => void) {
+  return {
+    onPointerDown: (e: React.PointerEvent) => { if (e.button !== 0) return; e.preventDefault(); fn(); },
+    onClick: (e: React.MouseEvent) => { if (e.detail === 0) fn(); },
+  };
+}
+
+// 진행 중 풀이 자동 저장 키 (기기 안에만 저장)
+const ACTIVE_SESSION_KEY = "active_session";
+interface SavedSession {
+  problems: MathProblem[]; answers: { val: string, ok: boolean }[];
+  combo: number; maxCombo: number; hintsUsed: number; hintStarsSpent: number; savedAt: number;
+}
+function readSavedSession(): SavedSession | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(ACTIVE_SESSION_KEY) || "null");
+    return s && Array.isArray(s.problems) && s.problems.length && s.answers.length < s.problems.length ? s : null;
+  } catch { return null; }
+}
+
 // ─────────────────────────────────────────────
 // 작은 컴포넌트들
 // ─────────────────────────────────────────────
@@ -210,6 +234,11 @@ export default function App() {
   const [combo, setCombo] = useState(0);
   const [maxCombo, setMaxCombo] = useState(0);
   const [hintsUsed, setHintsUsed] = useState(0);
+  const [hintStarsSpent, setHintStarsSpent] = useState(0);   // 이번 회차에 힌트로 쓴 별
+  const [hintBuyOpen, setHintBuyOpen] = useState(false);
+  const [quitOpen, setQuitOpen] = useState(false);
+  const [savedSession, setSavedSession] = useState<SavedSession | null>(() => readSavedSession());
+  const lastKeyAtRef = useRef(0);
   const [milestone, setMilestone] = useState<{ type: 'stars' | 'wish' | 'hall'; value: number } | null>(null);
   const [wishCoupons, setWishCoupons] = useState<number[]>(() => {
     try { return JSON.parse(localStorage.getItem("wish_coupons") || "[]"); } catch { return []; }
@@ -437,7 +466,7 @@ export default function App() {
       stored[lastRecord.ts] = lastRecord;
       localStorage.setItem("records", JSON.stringify(stored));
       const allRecords = Object.values(stored) as LearningRecord[];
-      const totalStars = allRecords.reduce((acc, r) => acc + Math.floor(r.correct / 5), 0);
+      const totalStars = Math.max(0, allRecords.reduce((acc, r) => acc + Math.floor(r.correct / 5) - (r.hintStars || 0), 0));
       setStars(totalStars);
       localStorage.setItem("stars", String(totalStars));
       markRecordDirty(lastRecord.ts);
@@ -446,6 +475,10 @@ export default function App() {
 
   const startSolving = async () => {
     if (config.unitIds.length === 0) { showToast("부모님 설정에서 단원을 먼저 선택해주세요!"); return; }
+    const saved = readSavedSession();
+    if (saved && !window.confirm(`풀던 문제가 있어요 (${saved.answers.length}/${saved.problems.length}).\n새로 시작하면 풀던 문제는 지워져요. 새로 시작할까요?`)) return;
+    localStorage.removeItem(ACTIVE_SESSION_KEY);
+    setSavedSession(null);
     const newProblems = makeProblems(config.unitIds, config.difficulty, config.count);
     setProblems(newProblems);
     setAnswers([]);
@@ -460,6 +493,9 @@ export default function App() {
     setCombo(0);
     setMaxCombo(0);
     setHintsUsed(0);
+    setHintStarsSpent(0);
+    setHintBuyOpen(false);
+    setQuitOpen(false);
 
     if (config.geminiKey) {
       try {
@@ -473,9 +509,71 @@ export default function App() {
     }
   };
 
+  /** 저장해 둔 풀이를 이어서 */
+  const resumeSession = () => {
+    const sv = readSavedSession();
+    if (!sv) { setSavedSession(null); return; }
+    setProblems(sv.problems);
+    setAnswers(sv.answers);
+    setCurIdx(sv.answers.length);
+    setCombo(sv.combo); setMaxCombo(sv.maxCombo);
+    setHintsUsed(sv.hintsUsed); setHintStarsSpent(sv.hintStarsSpent || 0);
+    setAnsInput(""); setIsAnsDisabled(false); setFeedbackIcon(null);
+    setCharFeedback(""); setHint(""); setSessionGoal("");
+    setChildPhase('solving');
+  };
+  const discardSession = () => {
+    if (!window.confirm("풀던 문제를 지울까요?")) return;
+    localStorage.removeItem(ACTIVE_SESSION_KEY);
+    setSavedSession(null);
+  };
+  /** 풀이 그만두기: 진행 상황은 저장돼 있어서 나중에 이어서 풀 수 있음 */
+  const quitSolving = () => {
+    setQuitOpen(false);
+    setHintBuyOpen(false);
+    setSavedSession(readSavedSession());
+    setChildPhase('ready');
+  };
+
+  // 풀이 중 진행 상황 자동 저장 (앱이 닫혀도 이어서 풀 수 있게)
+  useEffect(() => {
+    if (childPhase !== 'solving' || problems.length === 0) return;
+    if (answers.length >= problems.length) return;
+    const data: SavedSession = { problems, answers, combo, maxCombo, hintsUsed, hintStarsSpent, savedAt: Date.now() };
+    try { localStorage.setItem(ACTIVE_SESSION_KEY, JSON.stringify(data)); } catch { }
+  }, [childPhase, problems, answers, combo, maxCombo, hintsUsed, hintStarsSpent]);
+
+  // 뒤로가기 가로채기: 앱 안 화면에서는 브라우저 기록을 하나 쌓아 두고,
+  // 뒤로가기를 누르면 페이지를 떠나는 대신 확인창(풀이 중) 또는 첫 화면으로 이동
+  const navStateRef = useRef({ screen, childPhase });
+  navStateRef.current = { screen, childPhase };
+  const trapArmedRef = useRef(false);
+  useEffect(() => {
+    if (screen !== 'landing' && !trapArmedRef.current) {
+      history.pushState({ mathAceTrap: true }, "");
+      trapArmedRef.current = true;
+    }
+  }, [screen, childPhase]);
+  useEffect(() => {
+    const onPop = () => {
+      trapArmedRef.current = false;
+      const { screen: sc, childPhase: ph } = navStateRef.current;
+      if (sc === 'child' && ph === 'solving') {
+        history.pushState({ mathAceTrap: true }, "");
+        trapArmedRef.current = true;
+        setQuitOpen(true);
+      } else if (sc !== 'landing') {
+        setScreen('landing');
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
   // ── 키패드: 숫자만 저장, 표시는 콤마 자동 (withCommas) ──
   const keypadPress = (key: string) => {
     if (isAnsDisabled) return;
+    lastKeyAtRef.current = Date.now();
     if (key === "⌫") { setAnsInput(v => v.slice(0, -1)); return; }
     if (key === "C") { setAnsInput(""); return; }
     setAnsInput(v => (v.length >= 14 ? v : v + key));
@@ -511,15 +609,21 @@ export default function App() {
     return keys;
   })();
 
-  const hintLimit = Math.max(1, Math.floor(problems.length / 2));
-  const hintsLeft = hintLimit - hintsUsed;
+  // 무료 힌트: 문제 수의 20% (20문제 → 4개). 다 쓰면 별 1개로 힌트 1개.
+  const hintLimit = Math.max(1, Math.round(problems.length * 0.2));
+  const hintsLeft = Math.max(0, hintLimit - hintsUsed);
+  const spendableStars = stars - hintStarsSpent;
 
-  const getHint = async () => {
+  const getHint = async (paid = false) => {
     if (isHintLoading || isAnsDisabled) return;
     if (hint) return;
-    if (hintsLeft <= 0) { showToast("오늘 힌트를 다 썼어요! 스스로 풀어볼까? 💪"); return; }
+    if (hintsLeft <= 0 && !paid) {
+      if (spendableStars >= 1) setHintBuyOpen(true);
+      else showToast("무료 힌트를 다 썼고 쓸 수 있는 별이 없어요. 스스로 풀어볼까? 💪");
+      return;
+    }
     const p = problems[curIdx];
-    setHintsUsed(h => h + 1);
+    if (paid) setHintStarsSpent(n => n + 1); else setHintsUsed(h => h + 1);
     const childName = config.childName?.trim();
     const namePart = childName ? `${childName}(이)가` : "아이가";
 
@@ -579,6 +683,8 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
 
   const submitAnswer = async () => {
     if (!ansInput || isAnsDisabled) return;
+    // 숫자를 누르다 손가락이 미끄러져 확인이 눌리는 것 방지
+    if (Date.now() - lastKeyAtRef.current < 400) return;
     const p = problems[curIdx];
     // 콤마·공백 제거 후 비교. 순수 숫자는 수치 비교도 허용.
     const ansIsPureNumber = /^-?\d+(\.\d+)?$/.test(normalize(String(p.ans)));
@@ -634,6 +740,10 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
 
   const finishSolving = async (finalAnswers: { val: string, ok: boolean }[], aiFeedback?: string, gradingTarget?: MathProblem[]) => {
     const srcProblems = gradingTarget && gradingTarget.length ? gradingTarget : problems;
+    const spent = gradingTarget ? 0 : hintStarsSpent;   // 종이 채점은 힌트 없음
+    localStorage.removeItem(ACTIVE_SESSION_KEY);
+    setSavedSession(null);
+    setHintStarsSpent(spent);
     const correct = finalAnswers.filter(a => a.ok).length;
     const total = finalAnswers.length;
     const newRecord: LearningRecord = {
@@ -643,7 +753,8 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
       wrongExprs: srcProblems.filter((_, i) => !finalAnswers[i]?.ok).map(p => p.expr),
       problems: [...srcProblems],
       answers: [...finalAnswers],
-      profileId: activeProfileId()
+      profileId: activeProfileId(),
+      ...(spent > 0 ? { hintStars: spent } : {})
     };
     newRecord.updatedAt = newRecord.ts;
     const stored = JSON.parse(localStorage.getItem("records") || "{}");
@@ -652,8 +763,8 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
     setRecords(Object.values(stored).sort((a: any, b: any) => b.ts - a.ts) as LearningRecord[]);
     markRecordDirty(newRecord.ts);
 
-    const earned = Math.floor(correct / 5);
-    const newStars = stars + earned;
+    const earned = Math.floor(correct / 5) - spent;
+    const newStars = Math.max(0, stars + earned);
     setStars(newStars);
     localStorage.setItem("stars", String(newStars));
 
@@ -1240,6 +1351,17 @@ ${wrongSummary}
                   </div>
 
                   <div className="grid gap-4">
+                    {savedSession && (
+                      <div className="bg-amber-50 border-2 border-amber-200 rounded-[1.5rem] p-4 flex items-center gap-3">
+                        <div className="text-2xl">✏️</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-black text-amber-800 text-sm">풀던 문제가 있어요</div>
+                          <div className="text-[11px] font-bold text-amber-600">{savedSession.answers.length}/{savedSession.problems.length}문제까지 풀었어요</div>
+                        </div>
+                        <button onClick={discardSession} className="shrink-0 text-xs font-bold text-amber-500 px-2 py-2">지우기</button>
+                        <button onClick={resumeSession} className="shrink-0 bg-amber-500 text-white text-sm font-black px-4 py-2.5 rounded-xl active:bg-amber-600">이어서 풀기</button>
+                      </div>
+                    )}
                     <motion.button whileTap={{ scale: 0.97 }}
                       className="w-full bg-gradient-to-br from-brand-500 to-brand-600 p-8 landscape:p-6 rounded-[2rem] shadow-xl shadow-brand-200 flex flex-col items-center gap-4 group"
                       onClick={startSolving}>
@@ -1352,7 +1474,7 @@ ${wrongSummary}
                 {/* [상단 고정] 진행바 + 별 + 홈 */}
                 <div className="shrink-0 px-4 pt-4 pb-2">
                   <div className="flex items-center gap-3">
-                    <button onClick={() => setScreen('landing')}
+                    <button onClick={() => setQuitOpen(true)} aria-label="그만두기"
                       className="shrink-0 w-9 h-9 bg-white rounded-xl flex items-center justify-center shadow-sm border border-slate-100 text-slate-400">
                       <Home size={16} />
                     </button>
@@ -1465,36 +1587,39 @@ ${wrongSummary}
                     <>
                       <div className="grid grid-cols-3 gap-1.5 landscape:gap-2 landscape:flex-1 landscape:min-h-0 landscape:auto-rows-fr">
                         {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map(k => (
-                          <button key={k} onClick={() => keypadPress(k)}
-                            className="bg-white border-2 border-slate-200 rounded-xl py-3 landscape:py-0 landscape:min-h-9 text-2xl font-black text-slate-800 shadow-sm active:scale-90 active:bg-brand-50 active:border-brand-300 transition-all">
+                          <button key={k} {...tap(() => keypadPress(k))}
+                            className="bg-white border-2 border-slate-200 rounded-xl py-3 landscape:py-0 landscape:min-h-9 text-2xl font-black text-slate-800 shadow-sm select-none touch-manipulation active:bg-brand-100 active:border-brand-400 transition-colors">
                             {k}
                           </button>
                         ))}
-                        <button onClick={() => keypadPress("C")}
-                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 landscape:py-0 text-sm font-black text-slate-500 active:scale-90 transition-all">지우기</button>
-                        <button onClick={() => keypadPress("0")}
-                          className="bg-white border-2 border-slate-200 rounded-xl py-3 landscape:py-0 landscape:min-h-9 text-2xl font-black text-slate-800 shadow-sm active:scale-90 active:bg-brand-50 active:border-brand-300 transition-all">0</button>
-                        <button onClick={() => keypadPress("⌫")}
-                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 landscape:py-0 flex items-center justify-center text-slate-500 active:scale-90 transition-all">
+                        <button {...tap(() => keypadPress("C"))}
+                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 landscape:py-0 text-sm font-black text-slate-500 select-none touch-manipulation active:bg-slate-200 transition-colors">지우기</button>
+                        <button {...tap(() => keypadPress("0"))}
+                          className="bg-white border-2 border-slate-200 rounded-xl py-3 landscape:py-0 landscape:min-h-9 text-2xl font-black text-slate-800 shadow-sm select-none touch-manipulation active:bg-brand-100 active:border-brand-400 transition-colors">0</button>
+                        <button {...tap(() => keypadPress("⌫"))}
+                          className="bg-slate-100 border-2 border-slate-200 rounded-xl py-3 landscape:py-0 flex items-center justify-center text-slate-500 select-none touch-manipulation active:bg-slate-200 transition-colors">
                           <Delete size={22} />
                         </button>
                       </div>
                       {specialKeys.length > 0 && (
                         <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${specialKeys.length}, 1fr)` }}>
                           {specialKeys.map(k => (
-                            <button key={k} onClick={() => keypadPress(k === "…" ? " … " : k)}
-                              className="bg-amber-50 border-2 border-amber-200 rounded-xl py-2.5 text-xl font-black text-amber-700 active:scale-90 transition-all">{k === "…" ? <span className="text-base">나머지 <span className="text-xl">…</span></span> : k}</button>
+                            <button key={k} {...tap(() => keypadPress(k === "…" ? " … " : k))}
+                              className="bg-amber-50 border-2 border-amber-200 rounded-xl py-2.5 text-xl font-black text-amber-700 select-none touch-manipulation active:bg-amber-100 transition-colors">{k === "…" ? <span className="text-base">나머지 <span className="text-xl">…</span></span> : k}</button>
                           ))}
                         </div>
                       )}
                     </>
                   )}
-                  <div className="flex gap-2">
+                  <div className="flex gap-3 !mt-4 pt-4 border-t-2 border-dashed border-slate-200">
                     {!isAnsDisabled && (
-                      <button className="btn-secondary shrink-0 py-3.5 px-4 flex items-center justify-center gap-1.5 disabled:opacity-40"
-                        onClick={getHint} disabled={isHintLoading || hintsLeft <= 0}>
+                      <button className="btn-secondary shrink-0 py-3.5 px-4 flex items-center justify-center gap-1.5 disabled:opacity-40 touch-manipulation"
+                        onClick={() => getHint()} disabled={isHintLoading || (hintsLeft <= 0 && spendableStars < 1)}
+                        aria-label={hintsLeft > 0 ? `힌트 ${hintsLeft}번 남음` : "별 1개로 힌트 보기"}>
                         {isHintLoading ? <Loader2 className="animate-spin" size={20} /> : <Lightbulb size={20} />}
-                        <span className={`text-xs font-black px-1.5 py-0.5 rounded-full ${hintsLeft > 0 ? 'bg-amber-100 text-amber-600' : 'bg-slate-200 text-slate-400'}`}>{hintsLeft}</span>
+                        {hintsLeft > 0
+                          ? <span className="text-xs font-black px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600">{hintsLeft}</span>
+                          : <span className="text-xs font-black px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 flex items-center gap-0.5"><Star size={11} className="fill-amber-400 text-amber-400" />1</span>}
                       </button>
                     )}
                     <button className="btn-primary flex-1 py-3.5 text-lg shadow-brand-200 flex items-center justify-center gap-2"
@@ -1543,6 +1668,7 @@ ${wrongSummary}
                           <Star size={20} className="fill-amber-500" />{Math.floor(answers.filter(a => a.ok).length / 5)}
                         </div>
                         <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">이번에 받은 별</div>
+                        {hintStarsSpent > 0 && <div className="text-[10px] font-bold text-rose-400 mt-0.5">힌트에 쓴 별 −{hintStarsSpent}</div>}
                       </div>
                       <div className="bg-slate-50 p-4 rounded-3xl">
                         <div className="text-2xl font-black text-orange-500 font-display flex items-center justify-center gap-1">
@@ -1559,9 +1685,11 @@ ${wrongSummary}
                         <span className="text-sm font-bold text-amber-700">지금까지 모은 별</span>
                         <span className="flex items-center gap-1.5 text-2xl font-black text-amber-600 font-display">
                           <Star size={22} className="fill-amber-500 text-amber-500" />{stars}
-                          {Math.floor(answers.filter(a => a.ok).length / 5) > 0 && (
-                            <span className="text-xs font-black text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full">+{Math.floor(answers.filter(a => a.ok).length / 5)}</span>
-                          )}
+                          {(() => {
+                            const net = Math.floor(answers.filter(a => a.ok).length / 5) - hintStarsSpent;
+                            if (net === 0) return null;
+                            return <span className={`text-xs font-black px-2 py-0.5 rounded-full ${net > 0 ? 'text-emerald-600 bg-emerald-100' : 'text-rose-500 bg-rose-100'}`}>{net > 0 ? `+${net}` : net}</span>;
+                          })()}
                         </span>
                       </div>
                       <div className="bg-white h-2 rounded-full overflow-hidden mt-3">
@@ -1657,6 +1785,50 @@ ${wrongSummary}
                   <p className="text-slate-500 font-medium">별 {milestone.value}개! {config.childName?.trim() ? `${config.childName.trim()}는 ` : ""}진정한 수학 마스터야 👑</p></>
               )}
               <button onClick={() => setMilestone(null)} className="btn-primary w-full mt-6 py-4 text-lg">좋아! 🙌</button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {(quitOpen || hintBuyOpen) && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[95] bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-6 print:hidden"
+            onClick={() => { setQuitOpen(false); setHintBuyOpen(false); }}>
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="bg-white rounded-[2rem] p-7 w-full max-w-sm text-center shadow-2xl space-y-5">
+              {quitOpen ? (
+                <>
+                  <div className="text-5xl">🤔</div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-xl font-black text-slate-900">풀이를 그만둘까요?</h3>
+                    <p className="text-sm text-slate-500 font-medium">지금까지 푼 {answers.length}문제는 저장돼요.<br />나중에 <b>이어서 풀기</b>로 계속할 수 있어요.</p>
+                  </div>
+                  <div className="grid gap-2">
+                    <button className="btn-primary py-4 text-lg" onClick={() => setQuitOpen(false)}>계속 풀기</button>
+                    <button className="btn-secondary py-3.5" onClick={quitSolving}>그만두고 나가기</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-5xl">💡</div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-xl font-black text-slate-900">무료 힌트를 다 썼어요</h3>
+                    <p className="text-sm text-slate-500 font-medium">별 1개를 쓰고 힌트를 볼까?</p>
+                    <p className="text-xs font-bold text-amber-600 flex items-center justify-center gap-1">
+                      <Star size={14} className="fill-amber-400 text-amber-400" />쓸 수 있는 별 {spendableStars}개 → {spendableStars - 1}개
+                    </p>
+                  </div>
+                  <div className="grid gap-2">
+                    <button className="btn-primary py-4 text-lg flex items-center justify-center gap-2"
+                      onClick={() => { setHintBuyOpen(false); getHint(true); }}>
+                      <Star size={18} className="fill-white" />별 1개 쓰기
+                    </button>
+                    <button className="btn-secondary py-3.5" onClick={() => setHintBuyOpen(false)}>스스로 풀어볼래</button>
+                  </div>
+                </>
+              )}
             </motion.div>
           </motion.div>
         )}
@@ -1804,11 +1976,11 @@ ${wrongSummary}
               </div>
               <div className="grid grid-cols-3 gap-4">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
-                  <button key={n} className="h-14 bg-slate-50 hover:bg-slate-100 rounded-2xl text-xl font-black text-slate-700 transition-colors active:scale-90" onClick={() => handlePinInput(n)}>{n}</button>
+                  <button key={n} className="h-14 bg-slate-50 rounded-2xl text-xl font-black text-slate-700 select-none touch-manipulation transition-colors active:bg-trust-100" {...tap(() => handlePinInput(n))}>{n}</button>
                 ))}
                 <button className="h-14 flex items-center justify-center text-slate-300 hover:text-slate-500 transition-colors" onClick={() => { setPinOverlay(false); setPinBuffer(""); pinActionRef.current = null; setPinPurpose(""); }}><X size={24} /></button>
-                <button className="h-14 bg-slate-50 hover:bg-slate-100 rounded-2xl text-xl font-black text-slate-700 transition-colors active:scale-90" onClick={() => handlePinInput(0)}>0</button>
-                <button className="h-14 flex items-center justify-center text-slate-300 hover:text-slate-500 transition-colors" onClick={() => setPinBuffer(pinBuffer.slice(0, -1))}><Delete size={20} /></button>
+                <button className="h-14 bg-slate-50 rounded-2xl text-xl font-black text-slate-700 select-none touch-manipulation transition-colors active:bg-trust-100" {...tap(() => handlePinInput(0))}>0</button>
+                <button className="h-14 flex items-center justify-center text-slate-300 select-none touch-manipulation active:text-slate-500 transition-colors" {...tap(() => setPinBuffer(b => b.slice(0, -1)))}><Delete size={20} /></button>
               </div>
               {pinError && <motion.div initial={{ x: 10 }} animate={{ x: 0 }} className="text-rose-500 mt-6 text-sm font-bold">PIN 번호가 올바르지 않습니다.</motion.div>}
             </motion.div>

@@ -20,6 +20,7 @@ export interface LearningRecord {
   answers?: {val: string, ok: boolean}[];
   updatedAt?: number;   // 동기화: 마지막 수정 시각 (없으면 ts)
   profileId?: string;   // 동기화: 프로필 (현재 'default' 하나)
+  hintStars?: number;   // 이 회차에 추가 힌트로 쓴 별 (별 계산에서 차감)
 }
 
 export interface GradingResult {

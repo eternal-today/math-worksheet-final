@@ -66,7 +66,8 @@ export function activeProfileId(): string {
 export const isCouponMilestone = (m: number) => m % 50 === 0 && m % 100 !== 0;
 
 export function starsFromRecords(records: LearningRecord[]): number {
-  return records.reduce((acc, r) => acc + Math.floor((r.correct || 0) / 5), 0);
+  // 별 = Σ(정답/5 내림) − 힌트로 쓴 별
+  return Math.max(0, records.reduce((acc, r) => acc + Math.floor((r.correct || 0) / 5) - (r.hintStars || 0), 0));
 }
 
 /** 남은 쿠폰 = 발급된(축하 완료된) 쿠폰 마일스톤 − 사용한 쿠폰 */
