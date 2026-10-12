@@ -10,13 +10,16 @@ import {
   Calculator, Settings, History, Star, Award, ChevronRight, ChevronLeft,
   Printer, Camera, CheckCircle2, XCircle, Lock, User, Baby, Home, ArrowRight,
   RotateCcw, Sprout, Flame, Gem, Trophy, Check, X, Loader2, Lightbulb,
-  Sparkles, Smartphone, Plus, Delete, RefreshCw
+  Sparkles, Smartphone, Plus, Delete, RefreshCw, BookOpen
 } from 'lucide-react';
 import { UNITS, BADGES, GRADE_COLORS } from './constants';
 import { makeProblems } from './mathUtils';
 import { MathProblem, LearningRecord } from './types';
 import { callGemini, safeParseJSON, localHint } from './geminiUtils';
 import { motion, AnimatePresence } from 'motion/react';
+import { ConceptNote, ConceptNoteList } from './ConceptNote';
+import { hasConceptNote } from './conceptNotes';
+import { strategyHint } from './strategies';
 import {
   migrateLocal, startAutoSync, onSyncApplied, onSyncStatus, getSyncStatus, SyncStatus,
   markRecordDirty, markCouponUsed, touchConfig, touchPin, touchCelebrated,
@@ -175,7 +178,7 @@ const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[]; code?
 export default function App() {
   const [screen, setScreen] = useState<'landing' | 'parent' | 'child'>('landing');
   const [parentTab, setParentTab] = useState<'settings' | 'records'>('settings');
-  const [childPhase, setChildPhase] = useState<'loading' | 'noconfig' | 'ready' | 'solving' | 'result'>('ready');
+  const [childPhase, setChildPhase] = useState<'loading' | 'noconfig' | 'ready' | 'solving' | 'result' | 'notes'>('ready');
 
   const [config, setConfig] = useState<Config>(() => {
     try {
@@ -239,6 +242,22 @@ export default function App() {
   const [quitOpen, setQuitOpen] = useState(false);
   const [savedSession, setSavedSession] = useState<SavedSession | null>(() => readSavedSession());
   const lastKeyAtRef = useRef(0);
+
+  // 개념노트
+  const [conceptUnit, setConceptUnit] = useState<string | null>(null);
+  const [hintUnitId, setHintUnitId] = useState<string | null>(null);
+  const [conceptDone, setConceptDone] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem("concept_done") || "{}"); } catch { return {}; }
+  });
+  const markConceptDone = (unitId: string) => {
+    setConceptDone(prev => {
+      const next = { ...prev, [unitId]: prev[unitId] || Date.now() };
+      try { localStorage.setItem("concept_done", JSON.stringify(next)); } catch { }
+      return next;
+    });
+  };
+  /** 문제의 단원 ID (예전 기록은 단원 이름으로 찾음) */
+  const unitIdOf = (p?: MathProblem) => p?.unitId || UNITS.find(u => u.name === p?.unitName)?.id;
   const [milestone, setMilestone] = useState<{ type: 'stars' | 'wish' | 'hall'; value: number } | null>(null);
   const [wishCoupons, setWishCoupons] = useState<number[]>(() => {
     try { return JSON.parse(localStorage.getItem("wish_coupons") || "[]"); } catch { return []; }
@@ -473,13 +492,15 @@ export default function App() {
     }
   };
 
-  const startSolving = async () => {
-    if (config.unitIds.length === 0) { showToast("부모님 설정에서 단원을 먼저 선택해주세요!"); return; }
+  const startSolving = async (only?: { unitIds: string[]; count: number }) => {
+    const unitIds = only?.unitIds ?? config.unitIds;
+    const count = only?.count ?? config.count;
+    if (unitIds.length === 0) { showToast("부모님 설정에서 단원을 먼저 선택해주세요!"); return; }
     const saved = readSavedSession();
     if (saved && !window.confirm(`풀던 문제가 있어요 (${saved.answers.length}/${saved.problems.length}).\n새로 시작하면 풀던 문제는 지워져요. 새로 시작할까요?`)) return;
     localStorage.removeItem(ACTIVE_SESSION_KEY);
     setSavedSession(null);
-    const newProblems = makeProblems(config.unitIds, config.difficulty, config.count);
+    const newProblems = makeProblems(unitIds, config.difficulty, count);
     setProblems(newProblems);
     setAnswers([]);
     setCurIdx(0);
@@ -545,8 +566,8 @@ export default function App() {
 
   // 뒤로가기 가로채기: 앱 안 화면에서는 브라우저 기록을 하나 쌓아 두고,
   // 뒤로가기를 누르면 페이지를 떠나는 대신 확인창(풀이 중) 또는 첫 화면으로 이동
-  const navStateRef = useRef({ screen, childPhase });
-  navStateRef.current = { screen, childPhase };
+  const navStateRef = useRef({ screen, childPhase, conceptOpen: false });
+  navStateRef.current = { screen, childPhase, conceptOpen: !!conceptUnit };
   const trapArmedRef = useRef(false);
   useEffect(() => {
     if (screen !== 'landing' && !trapArmedRef.current) {
@@ -557,8 +578,17 @@ export default function App() {
   useEffect(() => {
     const onPop = () => {
       trapArmedRef.current = false;
-      const { screen: sc, childPhase: ph } = navStateRef.current;
-      if (sc === 'child' && ph === 'solving') {
+      const { screen: sc, childPhase: ph, conceptOpen } = navStateRef.current;
+      if (conceptOpen) {
+        // 개념노트를 닫고 원래 화면(풀이 중이면 풀이)으로
+        history.pushState({ mathAceTrap: true }, "");
+        trapArmedRef.current = true;
+        setConceptUnit(null);
+      } else if (sc === 'child' && ph === 'notes') {
+        history.pushState({ mathAceTrap: true }, "");
+        trapArmedRef.current = true;
+        setChildPhase('ready');
+      } else if (sc === 'child' && ph === 'solving') {
         history.pushState({ mathAceTrap: true }, "");
         trapArmedRef.current = true;
         setQuitOpen(true);
@@ -626,6 +656,14 @@ export default function App() {
     if (paid) setHintStarsSpent(n => n + 1); else setHintsUsed(h => h + 1);
     const childName = config.childName?.trim();
     const namePart = childName ? `${childName}(이)가` : "아이가";
+
+    // 개념노트가 있는 단원: 단원의 대표 풀이로 규칙 기반 힌트 (계산은 코드가, 답은 비움)
+    const uid = unitIdOf(p);
+    setHintUnitId(uid && hasConceptNote(uid) ? uid : null);
+    if (uid && p.a !== undefined && p.b !== undefined) {
+      const sh = strategyHint(uid, { a: p.a, b: p.b, op: p.op, ans: p.ans });
+      if (sh) { setHint(sh.text); return; }
+    }
 
     if (!config.geminiKey) { setHint(localHint(p.expr, p.op, p.a, p.b)); return; }
 
@@ -1364,7 +1402,7 @@ ${wrongSummary}
                     )}
                     <motion.button whileTap={{ scale: 0.97 }}
                       className="w-full bg-gradient-to-br from-brand-500 to-brand-600 p-8 landscape:p-6 rounded-[2rem] shadow-xl shadow-brand-200 flex flex-col items-center gap-4 group"
-                      onClick={startSolving}>
+                      onClick={() => startSolving()}>
                       <div className="w-16 h-16 bg-white/25 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
                         <Calculator size={32} className="text-white" />
                       </div>
@@ -1417,6 +1455,15 @@ ${wrongSummary}
                   </div>
 
                   <div className="space-y-4">
+                    <motion.button whileTap={{ scale: 0.98 }} onClick={() => setChildPhase('notes')}
+                      className="w-full bg-white border-2 border-brand-100 rounded-[1.5rem] px-5 py-4 flex items-center gap-4 text-left active:bg-brand-50">
+                      <div className="w-12 h-12 rounded-2xl bg-brand-50 text-brand-600 flex items-center justify-center shrink-0"><BookOpen size={24} /></div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-lg font-black text-slate-900">개념노트</div>
+                        <div className="text-sm text-slate-400">푸는 방법을 먼저 배워요</div>
+                      </div>
+                      <ChevronRight size={20} className="text-slate-300 shrink-0" />
+                    </motion.button>
                   {/* 보상 요약 — 누르면 자세히 */}
                   <button onClick={() => setRewardsOpen(true)}
                     className="w-full bg-white rounded-[2rem] border border-slate-100 shadow-sm p-5 space-y-4 active:scale-[0.98] transition-transform text-left">
@@ -1465,6 +1512,13 @@ ${wrongSummary}
                   )}
                   </div>
                 </motion.div>
+              </div>
+            )}
+
+            {childPhase === 'notes' && (
+              <div className="flex-1 overflow-y-auto">
+                <ConceptNoteList myUnitIds={config.unitIds} doneMap={conceptDone}
+                  onOpen={(id) => setConceptUnit(id)} onBack={() => setChildPhase('ready')} />
               </div>
             )}
 
@@ -1573,6 +1627,12 @@ ${wrongSummary}
                                 );
                                 return <div key={i} className="text-amber-700 font-bold text-sm">{t}</div>;
                               })}
+                              {hintUnitId && (
+                                <button onClick={() => setConceptUnit(hintUnitId)}
+                                  className="mt-2 inline-flex items-center gap-1.5 text-sm font-black text-amber-800 underline underline-offset-4 decoration-amber-300">
+                                  <BookOpen size={15} />개념노트에서 다른 방법도 보기
+                                </button>
+                              )}
                             </div>
                           )}
                         </motion.div>
@@ -1742,7 +1802,7 @@ ${wrongSummary}
                   </div>
 
                   <div className="flex gap-3 w-full pb-4">
-                    <button className="btn-primary flex-1 py-5 text-lg flex items-center justify-center gap-2" onClick={startSolving}>
+                    <button className="btn-primary flex-1 py-5 text-lg flex items-center justify-center gap-2" onClick={() => startSolving()}>
                       <RotateCcw size={20} /><span>새 문제 풀기</span>
                     </button>
                     <button className="btn-secondary flex-1 py-5 text-lg flex items-center justify-center gap-2" onClick={() => setChildPhase('ready')}>
@@ -1830,6 +1890,22 @@ ${wrongSummary}
                 </>
               )}
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {conceptUnit && (
+          <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}
+            className="fixed inset-0 z-[85] bg-slate-50 overflow-y-auto print:hidden">
+            <ConceptNote unitId={conceptUnit} done={!!conceptDone[conceptUnit]}
+              onClose={() => setConceptUnit(null)}
+              onDone={markConceptDone}
+              onPractice={(id) => {
+                setConceptUnit(null);
+                setScreen('child');
+                startSolving({ unitIds: [id], count: 5 });
+              }} />
           </motion.div>
         )}
       </AnimatePresence>

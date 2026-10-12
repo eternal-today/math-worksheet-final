@@ -37,6 +37,7 @@ interface Unit {
   min: number; max: number; maxR: number;
   bMin?: number; bMax?: number; qMin?: number; qMax?: number;
   noCarry?: boolean; withCarry?: boolean; noBorrow?: boolean; withBorrow?: boolean;
+  maxCarry?: number; minCarry?: number;   // 받아올림(내림) 횟수 제한
 }
 
 /** 난이도(1~3)에 따라 상한을 축소. Easy=0.4, Normal=0.75, Hard=1.0 */
@@ -60,6 +61,19 @@ const GENERATORS: Record<string, Generator> = {
   // 덧셈 / 뺄셈 (받아올림·받아내림 제약 포함)
   "+": (unit, diff) => genAddSub(unit, diff, "+"),
   "-": (unit, diff) => genAddSub(unit, diff, "-"),
+
+  // 받아올림 있는 (몇)+(몇): 두 한 자리 수의 합이 10 이상 (난이도와 무관하게 범위 고정)
+  "+1d": () => {
+    const a = ri(2, 9), b = ri(2, 9);
+    if (a + b < 10) return null;
+    return { expr: `${a} + ${b}`, a, b, op: "+", ans: String(a + b) };
+  },
+  // 받아내림 있는 (십몇)−(몇): 일의 자리에서 뺄 수 없는 경우만
+  "-teen": () => {
+    const a = ri(11, 18), b = ri(2, 9);
+    if (a % 10 >= b) return null;
+    return { expr: `${a} - ${b}`, a, b, op: "-", ans: String(a - b) };
+  },
 
   // 곱셈: bMin/bMax가 있으면 두 번째 인수를 그 범위로 (자릿수 보장)
   "×": (unit, diff) => {
@@ -181,9 +195,27 @@ function genAddSub(unit: Unit, diff: number, sym: "+" | "-"): GenProblem | null 
     if (unit.withBorrow && aOne >= bOne) return null;
   }
 
+  if (unit.maxCarry != null || unit.minCarry != null) {
+    const n = countCarries(a, b, sym);
+    if (unit.maxCarry != null && n > unit.maxCarry) return null;
+    if (unit.minCarry != null && n < unit.minCarry) return null;
+  }
+
   const ans = sym === "+" ? a + b : a - b;
   if (ans < 0 || ans > unit.maxR) return null;
   return { expr: `${a} ${sym} ${b}`, a, b, op: sym, ans: String(ans) };
+}
+
+/** 받아올림(덧셈)·받아내림(뺄셈) 횟수 */
+export function countCarries(a: number, b: number, sym: "+" | "-"): number {
+  let n = 0, c = 0;
+  for (let i = 0; i < 4; i++) {
+    const da = Math.floor(a / 10 ** i) % 10, db = Math.floor(b / 10 ** i) % 10;
+    if (sym === "+") { c = da + db + c >= 10 ? 1 : 0; }
+    else { c = da - c < db ? 1 : 0; }
+    n += c;
+  }
+  return n;
 }
 
 // ── 소수 덧셈/뺄셈 생성기 ──
@@ -255,14 +287,14 @@ export function makeProblems(unitIds: string[], diff: number, count: number): an
     const p = makeProblem(u, diff);
     if (seen.has(p.expr)) continue;          // 무중복
     seen.add(p.expr);
-    result.push({ ...p, unitName: u.name });
+    result.push({ ...p, unitName: u.name, unitId: u.id });
   }
 
   // 풀이가 소진돼 무중복으로 다 못 채운 경우: 중복 허용해 나머지 채움
   while (result.length < count) {
     const u = sel[ri(0, sel.length - 1)];
     const p = makeProblem(u, diff);
-    result.push({ ...p, unitName: u.name });
+    result.push({ ...p, unitName: u.name, unitId: u.id });
   }
 
   return result;

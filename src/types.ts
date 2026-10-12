@@ -7,6 +7,7 @@ export interface MathProblem {
   op: string;
   ans: string;
   unitName: string;
+  unitId?: string;   // 개념노트·규칙 힌트 연결용 (예전 기록에는 없음)
 }
 
 export interface LearningRecord {
