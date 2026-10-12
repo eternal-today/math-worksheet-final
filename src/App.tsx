@@ -30,7 +30,9 @@ import {
 import { initCelebration, migrateHanjaLegacy, notifyWallet, summary, takeCelebration, useWallet, couponState, coupons as aceCoupons, daysLeft } from './ace/wallet';
 import { TIERS } from './ace/chances';
 import { startAceSync } from './ace/aceSync';
-import { goHome } from './ace/links';
+import { LINKS, goHome } from './ace/links';
+import { AceNav } from './ace/AceNav';
+import { geminiKey, hubGeminiKey, maskKey } from './ace/settings';
 
 // 기존 기기 데이터 1회 이전 (사용한 쿠폰 목록 생성) — 첫 렌더 전에 실행
 migrateLocal();
@@ -275,6 +277,8 @@ export default function App() {
   const [selectedRecord, setSelectedRecord] = useState<LearningRecord | null>(null);
   // 에이스 지갑: 남은 별·쿠폰은 한자 에이스와 함께 씀 (src/ace/wallet.ts)
   const wallet = useWallet();
+  // AI 키: 에이스 홈에 넣은 키가 먼저, 없으면 이 앱에 넣은 키 (src/ace/settings.ts)
+  const aiKey = geminiKey(config.geminiKey);
 
   // 동기화
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => getSyncStatus());
@@ -503,11 +507,11 @@ export default function App() {
     setHintBuyOpen(false);
     setQuitOpen(false);
 
-    if (config.geminiKey) {
+    if (aiKey) {
       try {
         const unitNames = Array.from(new Set(newProblems.map(p => p.unitName)));
         const prompt = `오늘 풀 문제는 ${unitNames.join(", ")} 단원이야.${config.childName?.trim() ? ` 아이 이름은 "${config.childName.trim()}"이야. 이름을 불러주면서` : " 아이가"} 즐겁게 시작할 수 있도록 아주 짧고 신나는 목표 한마디 해줘! (반말, 이모지 듬뿍, 칭찬 가득, 1문장)`;
-        const text = await callGemini({ apiKey: config.geminiKey, prompt });
+        const text = await callGemini({ apiKey: aiKey, prompt });
         setSessionGoal(text.trim());
       } catch {
         setSessionGoal("오늘도 즐겁게 수학이랑 놀아보자! 화이팅! 🚀");
@@ -652,7 +656,7 @@ export default function App() {
       if (sh) { setHint(sh.text); return; }
     }
 
-    if (!config.geminiKey) { setHint(localHint(p.expr, p.op, p.a, p.b)); return; }
+    if (!aiKey) { setHint(localHint(p.expr, p.op, p.a, p.b)); return; }
 
     setHint("");
     setIsHintLoading(true);
@@ -697,7 +701,7 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
 - 한 줄에 한 가지 정보만. 각 줄은 ${grade <= 2 ? '10자 내외로 아주 짧게' : '15자 내외로 짧게'}.
 - "머릿속에 떠올려봐" 같은 공허한 말 금지. 반드시 실제 숫자 계산을 보여줘.
 - 반말, 이모지는 개념 줄에만 1개. 위 형식 외 다른 말 없이 출력해.`;
-      const text = await callGemini({ apiKey: config.geminiKey, prompt });
+      const text = await callGemini({ apiKey: aiKey, prompt });
       setHint(text && text.trim() ? text.trim() : localHint(p.expr, p.op, p.a, p.b));
     } catch {
       setHint(localHint(p.expr, p.op, p.a, p.b));
@@ -822,7 +826,7 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
 
     if (aiFeedback) {
       setFinalFeedback(aiFeedback);
-    } else if (config.geminiKey) {
+    } else if (aiKey) {
       setIsFinalFeedbackLoading(true);
       try {
         const nm = config.childName?.trim();
@@ -839,7 +843,7 @@ ${wrongSummary}
 3) 내일 딱 한 가지만 집중하자는 격려로 마무리.
 이모지 적당히, 3~4문장. 아이를 절대 혼내지 말고 힘나게. 정답 숫자를 일일이 나열하지 마.`
           : `${namePart}가 오늘 수학 ${total}문제를 전부(${correct}/${total}) 맞혔어! 이름 불러주면서 아주 신나고 따뜻하게 칭찬해줘. 무엇을 잘했는지 구체적으로 짚어주고, 자신감을 팍팍 주는 말로. 반말, 이모지 듬뿍, 2~3문장.`;
-        const text = await callGemini({ apiKey: config.geminiKey, prompt, thinkingBudget: 256 });
+        const text = await callGemini({ apiKey: aiKey, prompt, thinkingBudget: 256 });
         setFinalFeedback(text.trim());
       } catch {
         setFinalFeedback("오늘 정말 고생 많았어! 너는 정말 멋진 수학 에이스야! 🌟");
@@ -859,7 +863,7 @@ ${wrongSummary}
   const runGrading = async (base64: string, mime: string, sheetArg?: PrintedSheet, allowSwitch = true) => {
     const sheet = sheetArg || activeSheet;
     if (!sheet) { showToast("채점할 시험지가 없어요. 부모님 화면에서 학습지를 먼저 인쇄해 주세요!"); return; }
-    if (!config.geminiKey) { showToast("AI 채점은 부모님 설정에서 API 키 등록 후 사용할 수 있어요."); return; }
+    if (!aiKey) { showToast("AI 채점은 부모님 설정에서 API 키 등록 후 사용할 수 있어요."); return; }
     const target = sheet.problems;
     setIsGrading(true);
     setGradingError(false);
@@ -868,7 +872,7 @@ ${wrongSummary}
     try {
       const prompt = `이 사진은 아이가 푼 수학 학습지야. 다음 문제들의 정답을 확인해줘:\n${target.map((p, i) => `${i + 1}. ${p.expr} (정답: ${p.ans})`).join('\n')}\n학습지 위쪽에 인쇄된 "시험지 번호"(숫자 4자리)도 읽어줘. 안 보이면 빈 문자열.\n결과를 JSON으로만 줘 (다른 말 없이): { "sheetCode": string, "corrections": [ { "ok": boolean, "userVal": string } ], "feedback": "아이의 눈높이에 맞춘 따뜻하고 신나는 전체 피드백. 틀린 게 있으면 어떤 실수인지 부드럽게 짚어주고 뭘 더 연습하면 좋을지 한 가지 알려줘 (반말, 이모지)" }`;
       const text = await callGemini({
-        apiKey: config.geminiKey, prompt,
+        apiKey: aiKey, prompt,
         imageBase64: base64, imageMime: mime,
         jsonMode: true, thinkingBudget: 512,
       });
@@ -1245,9 +1249,17 @@ ${wrongSummary}
                       </div>
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Gemini API Key</label>
-                        <input type="password" className="input-field bg-slate-50" placeholder="AIza..."
-                          value={config.geminiKey} onChange={(e) => setConfig({ ...config, geminiKey: e.target.value })} />
-                        <p className="text-[10px] text-slate-400">AI 채점·힌트·피드백 기능을 위한 API 키입니다.</p>
+                        {hubGeminiKey() ? (
+                          <p className="text-sm text-slate-500 bg-slate-50 rounded-xl p-3">
+                            에이스 홈에 넣은 키({maskKey(hubGeminiKey())})를 쓰고 있어요. 바꾸려면 <a href={LINKS.home} className="text-trust-600 font-bold underline">에이스 홈</a> 부모님 모드에서 바꿔요.
+                          </p>
+                        ) : (
+                          <>
+                            <input type="password" className="input-field bg-slate-50" placeholder="AIza..."
+                              value={config.geminiKey} onChange={(e) => setConfig({ ...config, geminiKey: e.target.value })} />
+                            <p className="text-[10px] text-slate-400">AI 채점·힌트·피드백 기능을 위한 API 키입니다. 에이스 홈 부모님 모드에 넣으면 모든 에이스가 함께 써요.</p>
+                          </>
+                        )}
                       </div>
                     </section>
                   </div>
@@ -1357,10 +1369,7 @@ ${wrongSummary}
                       className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
                       <Home size={20} />
                     </button>
-                    <button onClick={() => goHome()} aria-label="에이스 홈"
-                      className="h-12 px-4 bg-white rounded-2xl flex items-center gap-1.5 shadow-sm border border-slate-100 text-sm font-black text-slate-600 active:scale-95 transition-transform">
-                      <Star size={16} className="text-amber-500 fill-amber-500" />에이스 홈
-                    </button>
+                    <AceNav current="math" />
                   </div>
                   <button onClick={() => setRewardsOpen(true)} aria-label="내 보상 보기"
                     className="bg-white px-5 py-2.5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3 active:scale-95 transition-transform">
