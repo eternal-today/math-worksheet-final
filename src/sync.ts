@@ -70,10 +70,26 @@ export function starsFromRecords(records: LearningRecord[]): number {
   return Math.max(0, records.reduce((acc, r) => acc + Math.floor((r.correct || 0) / 5) - (r.hintStars || 0), 0));
 }
 
-/** 남은 쿠폰 = 발급된(축하 완료된) 쿠폰 마일스톤 − 사용한 쿠폰 */
+/**
+ * 소원 쿠폰은 에이스 지갑(찬스 가게)으로 바뀌면서 새로 주지 않음.
+ * 이 기기에서 새 버전을 처음 켰을 때까지 발급된 쿠폰 마일스톤까지만 인정 (wish_freeze_max)
+ */
+const WISH_FREEZE = 'wish_freeze_max';
+export function wishFreezeMax(): number {
+  const v = localStorage.getItem(WISH_FREEZE);
+  if (v !== null) return Number(v) || 0;
+  const celebrated = readJSON<number[]>(K.celebrated, []);
+  const max = celebrated.filter(isCouponMilestone).reduce((a, m) => Math.max(a, m), 0);
+  // 아직 아무 기록도 없는 새 기기는 서버에서 받아온 뒤에 고정 (받기 전에 0으로 굳지 않게)
+  if (celebrated.length) localStorage.setItem(WISH_FREEZE, String(max));
+  return max;
+}
+
+/** 남은 쿠폰 = 발급된(축하 완료된) 쿠폰 마일스톤(멈춘 시점까지) − 사용한 쿠폰 */
 export function wishCouponsFrom(celebrated: number[], used: number[]): number[] {
   const usedSet = new Set(used);
-  return uniqSorted(celebrated.filter(isCouponMilestone).filter(m => !usedSet.has(m)));
+  const cap = wishFreezeMax();
+  return uniqSorted(celebrated.filter(isCouponMilestone).filter(m => m <= cap && !usedSet.has(m)));
 }
 
 /**
@@ -82,6 +98,7 @@ export function wishCouponsFrom(celebrated: number[], used: number[]): number[] 
  *  "발급됐는데 목록에 없는 쿠폰" = 사용한 쿠폰
  */
 export function migrateLocal() {
+  wishFreezeMax();   // 소원 쿠폰 멈춤 시점을 가장 먼저 고정
   try {
     if (localStorage.getItem(K.usedCoupons) !== null) return;
     const celebrated = readJSON<number[]>(K.celebrated, []);

@@ -27,11 +27,18 @@ import {
   makeConnectLink, consumeConnectLink,
   getPendingSheets, createPrintedSheet, markSheetGraded, PrintedSheet
 } from './sync';
+import { initCelebration, migrateHanjaLegacy, notifyWallet, summary, takeCelebration, useWallet, couponState, coupons as aceCoupons, daysLeft } from './ace/wallet';
+import { TIERS } from './ace/chances';
+import { startAceSync } from './ace/aceSync';
+import { goHome } from './ace/links';
 
 // 기존 기기 데이터 1회 이전 (사용한 쿠폰 목록 생성) — 첫 렌더 전에 실행
 migrateLocal();
 // 연결 링크로 열었으면 URL·가족 코드를 입력칸에 채워둠 (첫 렌더 전)
 const OPENED_WITH_CONNECT_LINK = consumeConnectLink();
+// 에이스 지갑(수학·한자 합산 별): 한자 첫날 데이터 옮기기(한 번만), 합산 축하 목록 준비 — 첫 렌더 전에
+migrateHanjaLegacy();
+initCelebration();
 
 // ─────────────────────────────────────────────
 // 유틸: 천 단위 콤마
@@ -266,6 +273,8 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("celebrated_stars") || "[]"); } catch { return []; }
   });
   const [selectedRecord, setSelectedRecord] = useState<LearningRecord | null>(null);
+  // 에이스 지갑: 남은 별·쿠폰은 한자 에이스와 함께 씀 (src/ace/wallet.ts)
+  const wallet = useWallet();
 
   // 동기화
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => getSyncStatus());
@@ -301,12 +310,14 @@ export default function App() {
     }
     setParentPin(localStorage.getItem("parent_pin") || "1234");
     setSheets(getPendingSheets());
+    notifyWallet();
   };
 
   useEffect(() => {
     const offApplied = onSyncApplied(reloadFromStorage);
     const offStatus = onSyncStatus(setSyncStatus);
     startAutoSync();
+    startAceSync({ pullMath: false });   // 지갑·한자 기록 동기화 (수학 기록은 위 동기화가 맡음)
     if (OPENED_WITH_CONNECT_LINK && !getSyncStatus().lastAt) {
       setTimeout(() => showToast("연결 정보를 받았어요! 부모님 화면 > 기기 동기화에서 연결해 주세요"), 600);
     }
@@ -397,33 +408,6 @@ export default function App() {
     }
   };
 
-  const checkStarMilestones = (prevStars: number, newStars: number) => {
-    const newCelebrated = [...celebratedStars];
-    let triggered: { type: 'stars' | 'wish' | 'hall'; value: number } | null = null;
-    let newCoupons = [...wishCoupons];
-    for (let m = Math.floor(prevStars / 10) * 10 + 10; m <= newStars; m += 10) {
-      if (newCelebrated.includes(m)) continue;
-      newCelebrated.push(m);
-      if (m % 100 === 0) triggered = { type: 'hall', value: m };
-      else if (m % 50 === 0) {
-        if (!newCoupons.includes(m)) newCoupons.push(m);
-        if (triggered?.type !== 'hall') triggered = { type: 'wish', value: m };
-      } else {
-        if (!triggered || triggered.type === 'stars') triggered = { type: 'stars', value: m };
-      }
-    }
-    if (newCelebrated.length !== celebratedStars.length) {
-      setCelebratedStars(newCelebrated);
-      localStorage.setItem("celebrated_stars", JSON.stringify(newCelebrated));
-      touchCelebrated();
-    }
-    if (newCoupons.length !== wishCoupons.length) {
-      setWishCoupons(newCoupons);
-      localStorage.setItem("wish_coupons", JSON.stringify(newCoupons));
-    }
-    return triggered;
-  };
-
   const useWishCoupon = (value: number) => {
     const updated = wishCoupons.filter(v => v !== value);
     setWishCoupons(updated);
@@ -489,6 +473,7 @@ export default function App() {
       setStars(totalStars);
       localStorage.setItem("stars", String(totalStars));
       markRecordDirty(lastRecord.ts);
+      notifyWallet();
     }
   };
 
@@ -611,15 +596,17 @@ export default function App() {
 
   // 현재 문제 답에 필요한 특수키 (분수 /, 비율 :, 나머지 …, 소수 .)
   // 다음 보상까지 남은 별 (홈·결과·보상 화면 공용)
-  const nextBadge = BADGES.find(b => stars < b.need) || null;
-  const nextCouponAt = stars < 50 ? 50 : Math.floor((stars - 50) / 100) * 100 + 150;
-  const nextHallAt = (Math.floor(stars / 100) + 1) * 100;
+  // 다음 목표: 뱃지(수학에서 번 별), 찬스(남은 별), 명예의 전당(수학+한자 번 별) — 기준 숫자(cur)가 각자 다름
+  const nextBadge = BADGES.find(b => wallet.mathEarned < b.need) || null;
+  const nextTier = TIERS.find(t => t.price > wallet.balance) || null;
+  const nextHallAt = (wallet.hallCount + 1) * 100;
   const nextGoals = [
-    ...(nextBadge ? [{ key: 'badge', emoji: '🏅', label: `뱃지 ‘${nextBadge.name}’`, at: nextBadge.need }] : []),
-    { key: 'coupon', emoji: '🎁', label: '소원 쿠폰', at: nextCouponAt },
-    { key: 'hall', emoji: '👑', label: '명예의 전당', at: nextHallAt },
-  ].sort((a, b) => a.at - b.at);
+    ...(nextBadge ? [{ key: 'badge', emoji: '🏅', label: `뱃지 ‘${nextBadge.name}’`, at: nextBadge.need, cur: wallet.mathEarned }] : []),
+    ...(nextTier ? [{ key: 'chance', emoji: '🎟️', label: nextTier.name, at: nextTier.price, cur: wallet.balance }] : []),
+    { key: 'hall', emoji: '👑', label: '명예의 전당', at: nextHallAt, cur: wallet.earned },
+  ].sort((a, b) => (a.at - a.cur) - (b.at - b.cur));
   const nearestGoal = nextGoals[0];
+  const activeAceCoupons = aceCoupons().filter(c => couponState(c) === 'active');
 
   const requestUseCoupon = (value: number) => {
     pinActionRef.current = () => useWishCoupon(value);
@@ -642,7 +629,7 @@ export default function App() {
   // 무료 힌트: 문제 수의 20% (20문제 → 4개). 다 쓰면 별 1개로 힌트 1개.
   const hintLimit = Math.max(1, Math.round(problems.length * 0.2));
   const hintsLeft = Math.max(0, hintLimit - hintsUsed);
-  const spendableStars = stars - hintStarsSpent;
+  const spendableStars = wallet.balance - hintStarsSpent;   // 수학·한자 합산 별
 
   const getHint = async (paid = false) => {
     if (isHintLoading || isAnsDisabled) return;
@@ -800,21 +787,26 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
     localStorage.setItem("records", JSON.stringify(stored));
     setRecords(Object.values(stored).sort((a: any, b: any) => b.ts - a.ts) as LearningRecord[]);
     markRecordDirty(newRecord.ts);
+    notifyWallet();
 
     const earned = Math.floor(correct / 5) - spent;
     const newStars = Math.max(0, stars + earned);
     setStars(newStars);
     localStorage.setItem("stars", String(newStars));
 
-    const ms = checkStarMilestones(stars, newStars);
-    if (ms) {
+    // 축하·명예의 전당: 수학과 한자를 합친 "번 별" 기준 (소원 쿠폰은 더 이상 새로 주지 않음)
+    const cel = takeCelebration();
+    if (cel) {
+      const ms = { type: cel.hall ? 'hall' as const : 'stars' as const, value: cel.value };
       setTimeout(() => {
         setMilestone(ms);
-        fireConfetti(ms.type === 'hall' ? 'epic' : ms.type === 'wish' ? 'big' : 'normal');
+        fireConfetti(ms.type === 'hall' ? 'epic' : cel.value % 50 === 0 ? 'big' : 'normal');
       }, 1400);
     }
 
-    const newBadges = BADGES.filter(b => !earnedBadges.includes(b.id) && newStars >= b.need).map(b => b.id);
+    // 뱃지: 수학에서 번 별 기준
+    const mathEarned = summary().mathEarned;
+    const newBadges = BADGES.filter(b => !earnedBadges.includes(b.id) && mathEarned >= b.need).map(b => b.id);
     if (newBadges.length > 0) {
       const updatedBadges = [...earnedBadges, ...newBadges];
       setEarnedBadges(updatedBadges);
@@ -1360,16 +1352,22 @@ ${wrongSummary}
             {childPhase === 'ready' && (
               <div className="flex-1 overflow-y-auto p-6">
                 <header className="flex justify-between items-center mb-6 max-w-lg landscape:max-w-5xl mx-auto w-full">
-                  <button onClick={() => setScreen('landing')}
-                    className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
-                    <Home size={20} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setScreen('landing')} aria-label="처음 화면"
+                      className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
+                      <Home size={20} />
+                    </button>
+                    <button onClick={() => goHome()} aria-label="에이스 홈"
+                      className="h-12 px-4 bg-white rounded-2xl flex items-center gap-1.5 shadow-sm border border-slate-100 text-sm font-black text-slate-600 active:scale-95 transition-transform">
+                      <Star size={16} className="text-amber-500 fill-amber-500" />에이스 홈
+                    </button>
+                  </div>
                   <button onClick={() => setRewardsOpen(true)} aria-label="내 보상 보기"
                     className="bg-white px-5 py-2.5 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3 active:scale-95 transition-transform">
                     <div className="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center">
                       <Star size={18} className="text-amber-500 fill-amber-500" />
                     </div>
-                    <span className="font-black text-slate-700 text-lg font-display">{stars}</span>
+                    <span className="font-black text-slate-700 text-lg font-display">{wallet.balance}</span>
                     <ChevronRight size={16} className="text-slate-300 -ml-1" />
                   </button>
                 </header>
@@ -1487,27 +1485,25 @@ ${wrongSummary}
                     <div>
                       <div className="flex justify-between text-xs font-bold mb-1.5">
                         <span className="text-slate-500">{nearestGoal.emoji} {nearestGoal.label}까지</span>
-                        <span className="text-amber-600">별 {nearestGoal.at - stars}개 남았어요</span>
+                        <span className="text-amber-600">별 {nearestGoal.at - nearestGoal.cur}개 남았어요</span>
                       </div>
                       <div className="bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                        <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (stars / nearestGoal.at) * 100)}%` }} />
+                        <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (nearestGoal.cur / nearestGoal.at) * 100)}%` }} />
                       </div>
                     </div>
                   </button>
 
-                  {wishCoupons.length > 0 && (
-                    <motion.button whileTap={{ scale: 0.97 }} onClick={() => setRewardsOpen(true)}
-                      className="w-full bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4">
-                      <div className="flex items-center justify-center gap-2 text-amber-600 font-black text-sm mb-1">🎁 내 소원 쿠폰 {wishCoupons.length}장</div>
-                      <p className="text-center text-[11px] text-amber-500">눌러서 쿠폰을 열고 엄마·아빠에게 보여주세요!</p>
-                    </motion.button>
-                  )}
-                  {stars >= 100 && (
+                  <motion.button whileTap={{ scale: 0.97 }} onClick={() => goHome('shop')}
+                    className="w-full bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4">
+                    <div className="flex items-center justify-center gap-2 text-amber-600 font-black text-sm mb-1">🎁 에이스 홈에서 찬스 바꾸기</div>
+                    <p className="text-center text-[11px] text-amber-500">{wishCoupons.length + activeAceCoupons.length > 0 ? `내 쿠폰 ${wishCoupons.length + activeAceCoupons.length}장 · ` : ''}수학과 한자 별을 함께 써요</p>
+                  </motion.button>
+                  {wallet.hallCount > 0 && (
                     <motion.button whileTap={{ scale: 0.97 }} onClick={() => setRewardsOpen(true)}
                       className="w-full bg-gradient-to-br from-brand-500 to-brand-700 rounded-2xl p-4 text-center text-white shadow-lg">
                       <div className="text-2xl mb-1">👑</div>
                       <div className="font-black">명예의 전당</div>
-                      <div className="text-xs opacity-90">별 {stars}개의 수학 마스터!</div>
+                      <div className="text-xs opacity-90">수학과 한자로 모은 별 {wallet.earned}개!</div>
                     </motion.button>
                   )}
                   </div>
@@ -1742,9 +1738,9 @@ ${wrongSummary}
                     <button onClick={() => setRewardsOpen(true)}
                       className="w-full bg-amber-50 border border-amber-100 rounded-3xl p-4 text-left active:scale-[0.98] transition-transform">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-bold text-amber-700">지금까지 모은 별</span>
+                        <span className="text-sm font-bold text-amber-700">지금 가진 별 <span className="text-[11px] font-bold text-amber-500">수학+한자</span></span>
                         <span className="flex items-center gap-1.5 text-2xl font-black text-amber-600 font-display">
-                          <Star size={22} className="fill-amber-500 text-amber-500" />{stars}
+                          <Star size={22} className="fill-amber-500 text-amber-500" />{wallet.balance}
                           {(() => {
                             const net = Math.floor(answers.filter(a => a.ok).length / 5) - hintStarsSpent;
                             if (net === 0) return null;
@@ -1753,10 +1749,10 @@ ${wrongSummary}
                         </span>
                       </div>
                       <div className="bg-white h-2 rounded-full overflow-hidden mt-3">
-                        <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (stars / nearestGoal.at) * 100)}%` }} />
+                        <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (nearestGoal.cur / nearestGoal.at) * 100)}%` }} />
                       </div>
                       <p className="text-xs font-bold text-amber-600 mt-2">
-                        {nearestGoal.emoji} {nearestGoal.label}까지 별 {nearestGoal.at - stars}개 남았어요
+                        {nearestGoal.emoji} {nearestGoal.label}까지 별 {nearestGoal.at - nearestGoal.cur}개 남았어요
                         <span className="text-amber-400 font-medium"> · 5문제 맞힐 때마다 별 1개</span>
                       </p>
                     </button>
@@ -1842,7 +1838,7 @@ ${wrongSummary}
               {milestone.type === 'hall' && (
                 <><div className="text-7xl mb-4">👑</div>
                   <h2 className="text-3xl font-black text-brand-600 font-display mb-2">명예의 전당 입성!</h2>
-                  <p className="text-slate-500 font-medium">별 {milestone.value}개! {config.childName?.trim() ? `${config.childName.trim()}는 ` : ""}진정한 수학 마스터야 👑</p></>
+                  <p className="text-slate-500 font-medium">수학과 한자로 별 {milestone.value}개! {config.childName?.trim() ? `${config.childName.trim()}는 ` : ""}진정한 에이스야 👑</p></>
               )}
               <button onClick={() => setMilestone(null)} className="btn-primary w-full mt-6 py-4 text-lg">좋아! 🙌</button>
             </motion.div>
@@ -1954,9 +1950,9 @@ ${wrongSummary}
                 <div>
                   <div className="text-xs font-bold text-slate-400">{config.childName?.trim() ? `${config.childName.trim()}의 보상` : "내 보상"}</div>
                   <div className="flex items-center gap-2 text-4xl font-black text-slate-900 font-display mt-1">
-                    <Star size={32} className="fill-amber-400 text-amber-400" />{stars}<span className="text-base text-slate-400 font-bold">개</span>
+                    <Star size={32} className="fill-amber-400 text-amber-400" />{wallet.balance}<span className="text-base text-slate-400 font-bold">개</span>
                   </div>
-                  <p className="text-xs text-slate-400 font-medium mt-1">5문제 맞힐 때마다 별 1개를 받아요</p>
+                  <p className="text-xs text-slate-400 font-medium mt-1">5문제 맞힐 때마다 별 1개 · 수학과 한자 별을 함께 써요</p>
                 </div>
                 <button onClick={() => setRewardsOpen(false)} aria-label="닫기"
                   className="w-10 h-10 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center active:scale-90"><X size={20} /></button>
@@ -1969,23 +1965,32 @@ ${wrongSummary}
                   <div key={g.key}>
                     <div className="flex justify-between text-xs font-bold mb-1">
                       <span className="text-slate-600">{g.emoji} {g.label} <span className="text-slate-300">· 별 {g.at}개</span></span>
-                      <span className="text-amber-600">{g.at - stars}개 남음</span>
+                      <span className="text-amber-600">{g.at - g.cur}개 남음</span>
                     </div>
                     <div className="bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                      <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (stars / g.at) * 100)}%` }} />
+                      <div className="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full" style={{ width: `${Math.min(100, (g.cur / g.at) * 100)}%` }} />
                     </div>
                   </div>
                 ))}
               </div>
 
-              {/* 소원 쿠폰 */}
+              {/* 쿠폰: 에이스 홈에서 바꾼 찬스 쿠폰(보기만) + 예전 소원 쿠폰 */}
               <div className="space-y-3">
-                <h4 className="text-sm font-black text-slate-800">소원 쿠폰</h4>
-                {wishCoupons.length === 0 ? (
-                  <p className="text-xs text-slate-400 font-medium bg-slate-50 rounded-2xl p-4">
-                    아직 쿠폰이 없어요. 별 {nextCouponAt}개를 모으면 소원 쿠폰을 받아요!
-                  </p>
-                ) : wishCoupons.map(v => (
+                <h4 className="text-sm font-black text-slate-800">내 쿠폰</h4>
+                {activeAceCoupons.map(c => (
+                  <div key={c.id} className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4 flex items-center gap-3">
+                    <div className="text-3xl">{c.emoji}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-black text-amber-700">{c.name}</div>
+                      <div className="text-[11px] font-bold text-amber-500">{c.desc}{daysLeft(c) !== null ? ` · ${daysLeft(c)}일 남음` : ''}</div>
+                    </div>
+                  </div>
+                ))}
+                <button onClick={() => goHome('shop')}
+                  className="w-full bg-gradient-to-br from-amber-400 to-orange-500 text-white font-black rounded-2xl py-3.5 active:scale-[0.98] transition-transform">
+                  🎁 에이스 홈에서 찬스 바꾸기
+                </button>
+                {wishCoupons.length === 0 ? null : wishCoupons.map(v => (
                   <div key={v} className="bg-gradient-to-br from-amber-50 to-orange-50 border-2 border-dashed border-amber-300 rounded-2xl p-4 flex items-center gap-3">
                     <div className="text-3xl">🎁</div>
                     <div className="flex-1 min-w-0">
@@ -2013,22 +2018,22 @@ ${wrongSummary}
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className={`font-black text-sm ${got ? 'text-slate-800' : 'text-slate-400'}`}>{b.name}</div>
-                          <div className="text-[11px] font-bold text-slate-400">별 {b.need}개 모으기</div>
+                          <div className="text-[11px] font-bold text-slate-400">수학 별 {b.need}개 모으기</div>
                         </div>
                         {got
                           ? <CheckCircle2 size={20} className="text-emerald-500 shrink-0" />
-                          : <span className="text-[11px] font-black text-amber-600 shrink-0">{Math.max(0, b.need - stars)}개 남음</span>}
+                          : <span className="text-[11px] font-black text-amber-600 shrink-0">{Math.max(0, b.need - wallet.mathEarned)}개 남음</span>}
                       </div>
                     );
                   })}
                 </div>
               </div>
 
-              {stars >= 100 && (
+              {wallet.hallCount > 0 && (
                 <div className="bg-gradient-to-br from-brand-500 to-brand-700 rounded-2xl p-5 text-center text-white">
                   <div className="text-3xl mb-1">👑</div>
                   <div className="font-black">명예의 전당 입성</div>
-                  <div className="text-xs opacity-90 mt-1">별 100개를 넘긴 수학 마스터예요!</div>
+                  <div className="text-xs opacity-90 mt-1">수학과 한자로 별 {wallet.earned}개를 모았어요!</div>
                 </div>
               )}
             </motion.div>
