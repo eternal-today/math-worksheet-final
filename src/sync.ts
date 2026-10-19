@@ -72,16 +72,18 @@ export function starsFromRecords(records: LearningRecord[]): number {
 
 /**
  * 소원 쿠폰은 에이스 지갑(찬스 가게)으로 바뀌면서 새로 주지 않음.
- * 이 기기에서 새 버전을 처음 켰을 때까지 발급된 쿠폰 마일스톤까지만 인정 (wish_freeze_max)
+ * 인정하는 쿠폰: 바뀐 버전을 배포하기 전에 푼 기록만으로 도달한 쿠폰 마일스톤(50, 150, 250…)까지.
+ * (예전에는 "이 기기에서 새 버전을 처음 켰을 때"를 기준으로 삼았는데, 그때 축하 목록이 비어 있던 기기는
+ *  나중에 동기화로 받은 기록 때문에 배포 뒤에 넘은 마일스톤까지 쿠폰으로 잡히는 문제가 있었음)
+ * 기록 시각으로 계산하므로 어느 기기에서나 같은 결과가 나옴.
  */
-const WISH_FREEZE = 'wish_freeze_max';
+const WISH_STOP_AT = Date.parse('2026-10-12T20:46:00+09:00');   // 소원 쿠폰 발급을 멈춘 버전 배포 시각
 export function wishFreezeMax(): number {
-  const v = localStorage.getItem(WISH_FREEZE);
-  if (v !== null) return Number(v) || 0;
-  const celebrated = readJSON<number[]>(K.celebrated, []);
-  const max = celebrated.filter(isCouponMilestone).reduce((a, m) => Math.max(a, m), 0);
-  // 아직 아무 기록도 없는 새 기기는 서버에서 받아온 뒤에 고정 (받기 전에 0으로 굳지 않게)
-  if (celebrated.length) localStorage.setItem(WISH_FREEZE, String(max));
+  const recs = Object.values(readJSON<Record<string, LearningRecord>>(K.records, {}))
+    .filter(r => r && (r as any).kind !== 'sheet' && Number(r.ts) < WISH_STOP_AT);
+  const before = starsFromRecords(recs);
+  let max = 0;
+  for (let m = 50; m <= before; m += 50) if (isCouponMilestone(m)) max = m;
   return max;
 }
 

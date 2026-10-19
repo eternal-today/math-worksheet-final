@@ -24,11 +24,12 @@ import {
   makeConnectLink, consumeConnectLink,
   getPendingSheets, createPrintedSheet, markSheetGraded, PrintedSheet
 } from './sync';
-import { initCelebration, migrateHanjaLegacy, notifyWallet, summary, takeCelebration, useWallet } from './ace/wallet';
+import { hubPin, initCelebration, migrateHanjaLegacy, notifyWallet, summary, takeCelebration, useWallet } from './ace/wallet';
 import { startAceSync } from './ace/aceSync';
 import { LINKS } from './ace/links';
 import { AceNav } from './ace/AceNav';
 import { AceRewardCards, AceRewardsSheet, aceGoals } from './ace/Rewards';
+import { AceSaveBar, confirmLeave } from './ace/SaveBar';
 import { geminiKey, hubGeminiKey, maskKey } from './ace/settings';
 
 // 기존 기기 데이터 1회 이전 (사용한 쿠폰 목록 생성) — 첫 렌더 전에 실행
@@ -202,6 +203,9 @@ export default function App() {
       geminiKey: localStorage.getItem("gemini_key") || "", childName: ""
     };
   });
+  // 마지막으로 저장한 설정 (부모님 화면의 "바뀐 설정" 판단·되돌리기용)
+  const [savedConfig, setSavedConfig] = useState<Config>(config);
+  const configDirty = JSON.stringify(config) !== JSON.stringify(savedConfig);
 
   const [parentPin, setParentPin] = useState(() => localStorage.getItem("parent_pin") || "1234");
   const [newPin, setNewPin] = useState("");
@@ -306,7 +310,10 @@ export default function App() {
       configAtRef.current = cfgAt;
       try {
         const c = JSON.parse(localStorage.getItem("app_config") || "null");
-        if (c) setConfig(prev => ({ ...prev, ...c, geminiKey: prev.geminiKey || c.geminiKey || "" }));
+        if (c) {
+          setConfig(prev => ({ ...prev, ...c, geminiKey: prev.geminiKey || c.geminiKey || "" }));
+          setSavedConfig(prev => ({ ...prev, ...c, geminiKey: prev.geminiKey || c.geminiKey || "" }));
+        }
       } catch { }
     }
     setParentPin(localStorage.getItem("parent_pin") || "1234");
@@ -420,6 +427,7 @@ export default function App() {
   const saveConfig = (newConfig: Config) => {
     const clamped = { ...newConfig, count: Math.min(MAX_COUNT, Math.max(5, newConfig.count)) };
     setConfig(clamped);
+    setSavedConfig(clamped);
     localStorage.setItem("gemini_key", clamped.geminiKey);
     localStorage.setItem("app_config", JSON.stringify(clamped));
     touchConfig();
@@ -429,6 +437,7 @@ export default function App() {
 
   const updatePin = () => {
     if (newPin.length !== 4) { showToast("PIN 번호는 4자리여야 합니다."); return; }
+    if (newPin === hubPin()) { showToast("에이스 홈 PIN과 다른 번호로 정해 주세요."); return; }
     setParentPin(newPin);
     localStorage.setItem("parent_pin", newPin);
     touchPin();
@@ -580,6 +589,9 @@ export default function App() {
         history.pushState({ mathAceTrap: true }, "");
         trapArmedRef.current = true;
         setQuitOpen(true);
+      } else if (sc === 'parent' && !confirmLeave()) {
+        history.pushState({ mathAceTrap: true }, "");   // 나가지 않기로 함 → 받침 다시 깔기
+        trapArmedRef.current = true;
       } else {
         setScreen('child'); setChildPhase('ready');   // 부모 화면·개념노트 목록·결과 → 아이 홈
       }
@@ -932,7 +944,7 @@ ${wrongSummary}
           >
             <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 h-16 flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <button onClick={() => { setScreen('child'); setChildPhase('ready'); }} aria-label="아이 홈" className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                <button onClick={() => { if (!confirmLeave()) return; setScreen('child'); setChildPhase('ready'); }} aria-label="아이 홈" className="p-2 hover:bg-slate-100 rounded-full transition-colors">
                   <Home size={20} className="text-slate-600" />
                 </button>
                 <h2 className="font-bold text-slate-900">부모님 설정</h2>
@@ -1024,11 +1036,6 @@ ${wrongSummary}
                     </div>
                   </section>
 
-                  <div className="pt-2 pb-2">
-                    <button className="btn-primary w-full py-4 text-lg bg-trust-600 hover:bg-trust-700 shadow-trust-100" onClick={() => saveConfig(config)}>
-                      모든 설정 저장하기
-                    </button>
-                  </div>
 
                   {/* 종이 학습지 */}
                   <section className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
@@ -1821,6 +1828,11 @@ ${wrongSummary}
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* 부모님 화면: 바뀐 설정이 있으면 아래에 저장 막대 (모든 에이스 같은 모양) */}
+      {screen === 'parent' && (
+        <AceSaveBar dirty={configDirty} onSave={() => saveConfig(config)} onRevert={() => setConfig(savedConfig)} />
+      )}
 
       {/* 내 보상 (모든 에이스 같은 모양) */}
       <AceRewardsSheet open={rewardsOpen} onClose={() => setRewardsOpen(false)} childName={config.childName} subject="math" badges={BADGES} gotIds={earnedBadges} />
