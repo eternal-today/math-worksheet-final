@@ -18,7 +18,7 @@ import { answersMatch } from './frac';
 import { motion, AnimatePresence } from 'motion/react';
 import { ConceptNote, ConceptNoteList } from './ConceptNote';
 import { hasConceptNote } from './conceptNotes';
-import { strategyHint } from './strategies';
+import { strategyHint, planFor } from './strategies';
 import {
   migrateLocal, startAutoSync, onSyncApplied, onSyncStatus, getSyncStatus, SyncStatus,
   markRecordDirty, markCouponUsed, touchConfig, touchPin, touchCelebrated,
@@ -678,8 +678,9 @@ export default function App() {
     // 개념노트가 있는 단원: 단원의 대표 풀이로 규칙 기반 힌트 (계산은 코드가, 답은 비움)
     const uid = unitIdOf(p);
     setHintUnitId(uid && hasConceptNote(uid) ? uid : null);
-    if (uid && ((p.a !== undefined && p.b !== undefined) || p.fa !== undefined)) {
-      const sh = strategyHint(uid, { a: p.a ?? 0, b: p.b ?? 0, op: p.op, ans: p.ans, fa: p.fa, fb: p.fb });
+    if (uid) {
+      let sh: ReturnType<typeof strategyHint> = null;
+      try { sh = strategyHint(uid, { a: p.a ?? 0, b: p.b ?? 0, op: p.op, ans: p.ans, fa: p.fa, fb: p.fb, e: p.expr }); } catch { sh = null; }
       if (sh) { setHint(sh.text); return; }
     }
 
@@ -1560,7 +1561,7 @@ ${wrongSummary}
                               {hintUnitId && (
                                 <button onClick={() => setConceptUnit(hintUnitId)}
                                   className="mt-2 inline-flex items-center gap-1.5 text-sm font-black text-amber-800 underline underline-offset-4 decoration-amber-300">
-                                  <BookOpen size={15} />개념노트에서 다른 방법도 보기
+                                  <BookOpen size={15} />{(() => { const pl = planFor(hintUnitId, problems[curIdx]?.op || ''); return pl && (pl.school || pl.others.length) ? '개념노트에서 다른 방법도 보기' : '개념노트에서 다시 보기'; })()}
                                 </button>
                               )}
                             </div>

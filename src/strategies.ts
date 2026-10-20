@@ -8,12 +8,12 @@
  */
 
 /** f: 분수 조각 (빈칸이면 자연수·분자가 빈칸, 분모는 보임) */
-import { decPlaces, toScaled, decText } from './frac';
+import { decPlaces, toScaled, decText, gcd, lcm } from './frac';
 
-export interface Seg { t: string; hl?: 'B' | 'O'; blank?: boolean; f?: { w?: string; n: string; d: string } }
+export interface Seg { t: string; hl?: 'B' | 'O'; blank?: boolean; f?: { w?: string; n: string; d: string }; blankD?: boolean }
 export interface Line { segs: Seg[]; note: string; noEq?: boolean }
 /** fa/fb: 분수(대분수·자연수 포함) 문제의 두 수. 소수 문제는 a, b에 소수 */
-export interface P { a: number; b: number; op: string; ans?: string; fa?: string; fb?: string }
+export interface P { a: number; b: number; op: string; ans?: string; fa?: string; fb?: string; e?: string }
 
 export interface Strategy {
   id: string;
@@ -874,10 +874,334 @@ const wholeFrac: Strategy = {
   },
 };
 
+// ─────────────────────────────────────────────
+// 5학년: 자연수의 혼합 계산
+// ─────────────────────────────────────────────
+type MixTok = string;
+const mixToks = (e: string): MixTok[] => e.replace(/−/g, '-').match(/\d+|[()+\-×÷]/g) || [];
+const mixStr = (t: MixTok[]) => t.map(x => (x === '-' ? '−' : x)).join(' ').replace(/\( /g, '(').replace(/ \)/g, ')');
+interface MixStep { before: MixTok[]; after: MixTok[]; at: number; l: string; op: string; r: string; v: number; kind: 'paren' | 'muldiv' | 'addsub' }
+/** 한 단계씩: 가장 안쪽 괄호 → ×÷ 왼쪽부터 → +− 왼쪽부터 */
+export function mixSteps(e: string): MixStep[] {
+  let t = mixToks(e);
+  const out: MixStep[] = [];
+  for (let guard = 0; guard < 20 && t.length > 1; guard++) {
+    let lo = 0, hi = t.length, inParen = false;
+    const open = t.lastIndexOf('(');
+    if (open >= 0) { lo = open + 1; hi = t.indexOf(')', open); inParen = true; }
+    let k = -1;
+    for (let i = lo; i < hi; i++) if (t[i] === '×' || t[i] === '÷') { k = i; break; }
+    const kind: MixStep['kind'] = inParen ? 'paren' : k >= 0 ? 'muldiv' : 'addsub';
+    if (k < 0) for (let i = lo; i < hi; i++) if (t[i] === '+' || t[i] === '-') { k = i; break; }
+    const l = Number(t[k - 1]), r = Number(t[k + 1]), op = t[k];
+    const v = op === '+' ? l + r : op === '-' ? l - r : op === '×' ? l * r : l / r;
+    let next = [...t.slice(0, k - 1), String(v), ...t.slice(k + 2)];
+    let at = k - 1;
+    // 괄호 안이 수 하나만 남으면 괄호를 벗김
+    if (inParen && next[at - 1] === '(' && next[at + 1] === ')') { next = [...next.slice(0, at - 1), next[at], ...next.slice(at + 2)]; at -= 1; }
+    out.push({ before: t, after: next, at, l: String(l), op: op === '-' ? '−' : op, r: String(r), v, kind });
+    t = next;
+  }
+  return out;
+}
+const isMix = (p: P) => p.op === 'mix' && !!p.e;
+const KIND_WORD = { paren: '괄호 안을 먼저', muldiv: '×, ÷를 먼저', addsub: '앞에서부터' };
+const mixOrder: Strategy = {
+  id: 'mixOrder', name: '한 단계씩 계산하기', sub: '괄호 → ×÷ → +−', when: '계산 순서를 지키며 한 번에 하나씩 해요',
+  applies: isMix,
+  lines: p => {
+    const st = mixSteps(p.e!);
+    const out: Line[] = [{ segs: [s(mixStr(mixToks(p.e!)))], note: st.some(x => x.kind === 'paren') ? '괄호 안 → ×, ÷ → +, − 순서로 해요' : st.some(x => x.kind === 'muldiv') ? '×, ÷를 먼저, +, −는 나중에 해요' : '앞에서부터 차례로 해요' }];
+    st.forEach(x => {
+      const pre = x.after.slice(0, x.at), post = x.after.slice(x.at + 1);
+      const segs: Seg[] = [];
+      if (pre.length) segs.push(s(mixStr(pre) + (pre[pre.length - 1] === '(' ? '' : ' ')));
+      segs.push(s(x.v, 'B', true));
+      if (post.length) segs.push(s((post[0] === ')' ? '' : ' ') + mixStr(post)));
+      out.push({ segs, note: `${KIND_WORD[x.kind]}: ${x.l} ${x.op} ${x.r} = ${x.v}` });
+    });
+    return out;
+  },
+  intro: p => { const st = mixSteps(p.e!); return st[0].kind === 'paren' ? '괄호 안부터 계산해 보자!' : st[0].kind === 'muldiv' ? '×, ÷부터 계산해 보자!' : '앞에서부터 차례로 계산해 보자!'; },
+  hint: p => {
+    const st = mixSteps(p.e!);
+    return [`먼저 ${st[0].l} ${st[0].op} ${st[0].r}부터 계산해 (${KIND_WORD[st[0].kind]})`, `그다음도 괄호 → ×, ÷ → +, − 순서로 한 단계씩 해 봐. 답은 얼마일까?`];
+  },
+};
+
+// ─────────────────────────────────────────────
+// 5학년: 약수와 배수 (최대공약수 · 최소공배수)
+// ─────────────────────────────────────────────
+const divisorsOf = (n: number) => Array.from({ length: n }, (_, i) => i + 1).filter(d => n % d === 0);
+const gcdList: Strategy = {
+  id: 'gcdList', name: '약수에서 찾기', sub: '큰 약수부터 확인', when: '작은 수의 약수 중 큰 수도 나누는 가장 큰 수를 찾아요',
+  applies: p => p.op === 'gcd',
+  lines: p => {
+    const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b), g = gcd(a, b);
+    const ds = divisorsOf(a), tries = ds.filter(d => d >= g).reverse();
+    const fails = tries.slice(0, -1).map(d => `${b} ÷ ${d} ✗`);
+    const shown = fails.length > 3 ? [...fails.slice(0, 2), '…'] : fails;
+    return [
+      { segs: [s(`${j.과(a)} ${b}의 최대공약수`)], note: `${a}의 약수 중에서 찾아요` },
+      { segs: [s(`${a}의 약수: ${ds.join(', ')}`)], note: `${j.을(a)} 나누어떨어지게 하는 수예요`, noEq: true },
+      { segs: [s((shown.length ? shown.join(', ') + ', ' : '') + `${b} ÷ `), s(g, 'O', true), s(' ✓')], note: `큰 약수부터 ${b}도 나누어떨어지는지 봐요 (${b} ÷ ${g} = ${b / g})`, noEq: true },
+      { segs: [s(g, 'B', true)], note: `${j.과(a)} ${j.을(b)} 함께 나누는 가장 큰 수예요` },
+    ];
+  },
+  intro: p => `${Math.min(p.a, p.b)}의 약수를 큰 것부터 보면서 ${Math.max(p.a, p.b)}도 나누어지는지 확인해 보자!`,
+  hint: p => { const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b); return [`${a}의 약수: ${divisorsOf(a).join(', ')}`, `큰 것부터 ${b}도 나누어떨어지는지 확인해 봐. 처음 되는 수는?`]; },
+};
+const lcmList: Strategy = {
+  id: 'lcmList', name: '배수에서 찾기', sub: '큰 수의 배수부터', when: '큰 수의 배수 중 작은 수로도 나누어떨어지는 첫 수를 찾아요',
+  applies: p => p.op === 'lcm',
+  lines: p => {
+    const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b), L = lcm(a, b);
+    const ms = Array.from({ length: L / b }, (_, i) => b * (i + 1));
+    const shown = ms.length > 7 ? [...ms.slice(0, 3), '…', ...ms.slice(-2)] : ms;
+    return [
+      { segs: [s(`${j.과(a)} ${b}의 최소공배수`)], note: `${b}의 배수에서 찾아요` },
+      { segs: [s(`${b}의 배수: ${shown.join(', ')}`)], note: `${b}씩 커지는 수예요`, noEq: true },
+      { segs: [s(L, 'O', true), s(` ÷ ${a} ✓`)], note: `${j.으로(a)}도 나누어떨어지는 첫 번째 수예요 (${L} ÷ ${a} = ${L / a})`, noEq: true },
+      { segs: [s(L, 'B', true)], note: '두 수의 공통인 배수 중 가장 작은 수예요' },
+    ];
+  },
+  intro: p => `${Math.max(p.a, p.b)}의 배수를 차례로 쓰면서 ${Math.min(p.a, p.b)}로도 나누어지는지 확인해 보자!`,
+  hint: p => { const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b); return [`${b}의 배수를 ${b}, ${b * 2}, ${b * 3}…처럼 차례로 써 봐`, `그중 ${j.으로(a)}도 나누어떨어지는 첫 수는?`]; },
+};
+/** 공약수로 나누기 (학교): 2) 12 18 → 6 9 */
+function ladder(a: number, b: number) {
+  const steps: { p: number; x: number; y: number }[] = [];
+  let x = a, y = b;
+  for (;;) {
+    let pr = 0;
+    for (let k = 2; k <= Math.min(x, y); k++) if (x % k === 0 && y % k === 0) { pr = k; break; }
+    if (!pr) break;
+    steps.push({ p: pr, x, y }); x /= pr; y /= pr;
+  }
+  return { steps, x, y };
+}
+function ladderLines(p: P, which: 'gcd' | 'lcm'): Line[] {
+  const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b);
+  const L = ladder(a, b), fs2 = L.steps.map(x => x.p);
+  const out: Line[] = [{ segs: [s(`${j.과(a)} ${b}의 ${which === 'gcd' ? '최대공약수' : '최소공배수'}`)], note: '두 수를 함께 나누는 수로 계속 나눠요' }];
+  L.steps.forEach(x => out.push({ segs: [s(`${x.p}) ${x.x}  ${x.y} → ${x.x / x.p}  ${x.y / x.p}`)], note: `${j.으로(x.p)} 둘 다 나눠요`, noEq: true }));
+  if (which === 'gcd') {
+    const g = fs2.reduce((m, v) => m * v, 1);
+    if (fs2.length > 1) out.push({ segs: [s(`왼쪽 수끼리 곱하기: ${fs2.join(' × ')} = ${g}`)], note: '나눈 수를 모두 곱해요', noEq: true });
+    out.push({ segs: [s(g, 'B', true)], note: fs2.length ? '최대공약수예요' : '공약수가 1뿐이에요' });
+  } else {
+    const all = [...fs2, L.x, L.y], v = all.reduce((m, x) => m * x, 1);
+    out.push({ segs: [s(`ㄴ자로 곱하기: ${all.join(' × ')} = ${v}`)], note: '나눈 수와 마지막 몫을 모두 곱해요', noEq: true });
+    out.push({ segs: [s(v, 'B', true)], note: '최소공배수예요' });
+  }
+  return out;
+}
+const gcdDivide: Strategy = {
+  id: 'gcdDivide', name: '공약수로 나누기', sub: '나눗셈 사다리', when: '학교에서 배우는 방법이에요. 수가 커도 빨라요',
+  applies: p => p.op === 'gcd', lines: p => ladderLines(p, 'gcd'), intro: () => '두 수를 함께 나누는 수로 계속 나눠 보자!',
+};
+const lcmDivide: Strategy = {
+  id: 'lcmDivide', name: '공약수로 나누기', sub: '나눗셈 사다리', when: '학교에서 배우는 방법이에요. 수가 커도 빨라요',
+  applies: p => p.op === 'lcm', lines: p => ladderLines(p, 'lcm'), intro: () => '두 수를 함께 나누는 수로 계속 나눠 보자!',
+};
+
+// ─────────────────────────────────────────────
+// 5학년: 약분
+// ─────────────────────────────────────────────
+/** 식이 들어간 분수 조각: (12 ÷ 2)/(18 ÷ 2) */
+const fe = (n: string, d: string, hl?: 'B' | 'O', w?: number): Seg => ({ t: `${w ? w + ' ' : ''}(${n})/(${d})`, hl, f: { w: w ? String(w) : undefined, n, d } });
+/** 분수 조각 빈칸 (분모까지 빈칸) */
+const fsD = (text: string, hl?: 'B' | 'O'): Seg => { const sg = fs(text, hl, true); return sg.f ? { ...sg, blankD: true } : sg; };
+const smallestCommon = (x: number, y: number) => { for (let k = 2; k <= Math.min(x, y); k++) if (x % k === 0 && y % k === 0) return k; return 0; };
+const reduceStep: Strategy = {
+  id: 'reduceStep', name: '차례로 나누기', sub: '같은 수로 나누고 또 나누기', when: '2, 3, 5처럼 쉬운 수부터 나눠요',
+  applies: p => p.op === 'reduce' && !!p.fa,
+  lines: p => {
+    let { w, n, d } = mx(p.fa);
+    const out: Line[] = [{ segs: [fs(p.fa!)], note: '분자와 분모를 같은 수로 나눠요' }];
+    let first = true;
+    for (let k = smallestCommon(n, d); k; k = smallestCommon(n, d)) {
+      // 나누는 식은 첫 단계만 보여줌 (다음 식이 앞 빈칸의 답을 드러내지 않게)
+      if (first) out.push({ segs: [fe(`${n} ÷ ${k}`, `${d} ÷ ${k}`, 'O', w)], note: `${j.과(n)} ${j.을(d)} 둘 다 ${j.으로(k)} 나눠요` });
+      n /= k; d /= k;
+      out.push({ segs: [fsD(mxText(w, n, d), 'B')], note: first ? `${n * k} ÷ ${k} = ${n}, ${d * k} ÷ ${k} = ${d}` : `또 ${j.으로(k)} 나눠요: ${n * k} ÷ ${k} = ${n}, ${d * k} ÷ ${k} = ${d}` });
+      first = false;
+    }
+    out[out.length - 1].note += ` → ${j.과(n)} ${j.은(d)} 1 말고 함께 나누는 수가 없어요`;
+    return out;
+  },
+  intro: () => '분자와 분모를 함께 나누는 수로 계속 나눠 보자!',
+  hint: p => { const { n, d } = mx(p.fa); const k = smallestCommon(n, d); return [`${j.과(n)} ${j.을(d)} 둘 다 ${j.으로(k)} 나눠 봐`, `더 나눌 수 없을 때까지 나누면 얼마일까?`]; },
+};
+const reduceGcd: Strategy = {
+  id: 'reduceGcd', name: '최대공약수로 한 번에', sub: '한 번에 나누기', when: '최대공약수를 알면 한 번에 끝나요',
+  applies: p => p.op === 'reduce' && !!p.fa,
+  lines: p => {
+    const { w, n, d } = mx(p.fa), g = gcd(n, d);
+    return [
+      { segs: [fs(p.fa!)], note: `${j.과(n)} ${d}의 최대공약수를 찾아요` },
+      { segs: [s(`${j.과(n)} ${d}의 최대공약수: ${g}`)], note: '공약수 중 가장 큰 수', noEq: true },
+      { segs: [fe(`${n} ÷ ${g}`, `${d} ÷ ${g}`, 'O', w)], note: `${j.으로(g)} 한 번에 나눠요` },
+      { segs: [fsD(mxText(w, n / g, d / g), 'B')], note: '바로 기약분수가 돼요' },
+    ];
+  },
+  intro: () => '최대공약수로 한 번에 나눠 보자!',
+};
+
+// ─────────────────────────────────────────────
+// 5학년: 분모가 다른 분수의 덧셈과 뺄셈 (통분)
+// ─────────────────────────────────────────────
+const isFracDiff = (p: P) => (isAdd(p) || isSub(p)) && !!p.fa && !!p.fb && mx(p.fa).d > 0 && mx(p.fb).d > 0 && mx(p.fa).d !== mx(p.fb).d;
+/** 마지막 줄이 약분 가능하면 약분 줄을 더함 (5학년부터 기약분수) */
+function addReduce(out: Line[]): Line[] {
+  const last = out[out.length - 1];
+  const t = lineText(last), m = mx(t);
+  if (m.d && gcd(m.n, m.d) > 1) {
+    const g = gcd(m.n, m.d);
+    out.push({ segs: [fsD(mxText(m.w, m.n / g, m.d / g), 'B')], note: `${j.과(m.n)} ${j.을(m.d)} ${j.으로(g)} 약분해요` });
+  }
+  return out;
+}
+function lcdLines(p: P, Lfn: (a: number, b: number) => number): Line[] {
+  const A = mx(p.fa), B = mx(p.fb), L = Lfn(A.d, B.d), kA = L / A.d, kB = L / B.d;
+  const sym = isAdd(p) ? '+' : '−';
+  const conv = (X: Mx, k: number) => (k === 1 ? fs(mxText(X.w, X.n, X.d)) : fe(`${X.n} × ${k}`, `${X.d} × ${k}`, undefined, X.w));
+  const fa2 = mxText(A.w, A.n * kA, L), fb2 = mxText(B.w, B.n * kB, L);
+  const out: Line[] = [
+    { segs: [s(`${p.fa} ${sym} ${p.fb}`)], note: Lfn === lcm ? `분모 ${j.과(A.d)} ${B.d}의 최소공배수 ${j.으로(L)} 분모를 같게 해요` : `분모끼리 곱한 ${A.d} × ${B.d} = ${j.으로(L)} 분모를 같게 해요` },
+    { segs: [conv(A, kA), s(` ${sym} `), conv(B, kB)], note: '분모와 분자에 같은 수를 곱해요' },
+  ];
+  const p2: P = { ...p, fa: fa2, fb: fb2 };
+  if (A.w || B.w) {
+    const rest = wholeFrac.lines(p2);
+    rest[0] = { segs: [fs(fa2, 'B', true), s(` ${sym} `), fs(fb2, 'B', true)], note: `${p.fa} = ${fa2}, ${p.fb} = ${fb2}` };
+    out.push(...rest);
+  } else {
+    const N = isAdd(p) ? A.n * kA + B.n * kB : A.n * kA - B.n * kB;
+    out.push({ segs: [fs(fa2, 'B', true), s(` ${sym} `), fs(fb2, 'B', true)], note: `${p.fa} = ${fa2}, ${p.fb} = ${fb2}` });
+    out.push({ segs: [fs(`${N}/${L}`, 'B', true)], note: `분모가 같으니 분자끼리: ${A.n * kA} ${sym} ${B.n * kB} = ${N}` });
+    if (N > L && N % L) out.push({ segs: [fs(mxText(Math.floor(N / L), N % L, L), 'B', true)], note: '가분수를 대분수로 바꿔요' });
+    else if (N % L === 0) out.push({ segs: [s(N / L, 'B', true)], note: '자연수가 돼요' });
+  }
+  return addReduce(out);
+}
+const lcdFrac: Strategy = {
+  id: 'lcdFrac', name: '최소공배수로 통분', sub: '분모를 같게', when: '분모의 최소공배수로 통분하면 수가 작아 편해요',
+  applies: isFracDiff, lines: p => lcdLines(p, lcm),
+  intro: p => `분모 ${j.과(mx(p.fa).d)} ${mx(p.fb).d}의 최소공배수로 분모를 같게 해 보자!`,
+  hint: p => { const A = mx(p.fa), B = mx(p.fb), L = lcm(A.d, B.d); return [`분모 ${j.과(A.d)} ${B.d}의 최소공배수는 ${L}야. 두 분수의 분모를 ${j.으로(L)} 바꿔 봐`, `분모가 같아지면 분자끼리 계산하고, 약분까지 하면 얼마일까?`]; },
+};
+const prodDen: Strategy = {
+  id: 'prodDen', name: '분모의 곱으로 통분', sub: '두 분모를 곱하기', when: '최소공배수를 몰라도 바로 할 수 있어요',
+  applies: p => isFracDiff(p) && !mx(p.fa).w && !mx(p.fb).w && mx(p.fa).d * mx(p.fb).d !== lcm(mx(p.fa).d, mx(p.fb).d),
+  lines: p => lcdLines(p, (a, b) => a * b),
+  intro: () => '두 분모를 곱한 수로 분모를 같게 해 보자!',
+};
+
+// ─────────────────────────────────────────────
+// 5학년: 분수의 곱셈
+// ─────────────────────────────────────────────
+const isFracMul = (p: P) => isMul(p) && !!p.fa && !!p.fb;
+/** 가분수로: 자연수는 k/1이 아니라 그대로 k */
+const imp = (X: Mx) => (X.d ? { n: X.w * X.d + X.n, d: X.d } : { n: X.w, d: 1 });
+const impText = (X: Mx) => { const f = imp(X); return f.d === 1 ? String(f.n) : `${f.n}/${f.d}`; };
+function mulTail(out: Line[], N: number, D: number): Line[] {
+  const g = gcd(N, D);
+  if (g > 1) out.push({ segs: [D / g === 1 ? s(N / g, 'B', true) : fsD(`${N / g}/${D / g}`, 'B')], note: `${j.과(N)} ${j.을(D)} ${j.으로(g)} 약분해요` });
+  const n2 = N / g, d2 = D / g;
+  if (d2 > 1 && n2 > d2) out.push({ segs: [fs(mxText(Math.floor(n2 / d2), n2 % d2, d2), 'B', true)], note: '가분수를 대분수로 바꿔요' });
+  return out;
+}
+const fracMul: Strategy = {
+  id: 'fracMul', name: '분자끼리, 분모끼리', sub: '곱하고 약분하기', when: '어떤 분수의 곱셈이든 쓸 수 있어요',
+  applies: isFracMul,
+  lines: p => {
+    const A = mx(p.fa), B = mx(p.fb), a = imp(A), b = imp(B);
+    const out: Line[] = [{ segs: [s(`${p.fa} × ${p.fb}`)], note: A.w && A.d || B.w && B.d ? '대분수는 가분수로 바꿔요' : '분수의 곱셈이에요' }];
+    if ((A.w && A.d) || (B.w && B.d)) out.push({ segs: [fs(impText(A), A.w && A.d ? 'O' : undefined), s(' × '), fs(impText(B), B.w && B.d ? 'O' : undefined)], note: '대분수를 가분수로 바꿨어요' });
+    const nT = b.d === 1 ? `${a.n} × ${b.n}` : a.d === 1 ? `${a.n} × ${b.n}` : `${a.n} × ${b.n}`;
+    const dT = a.d === 1 ? `${b.d}` : b.d === 1 ? `${a.d}` : `${a.d} × ${b.d}`;
+    out.push({ segs: [fe(nT, dT, 'O')], note: a.d === 1 || b.d === 1 ? '자연수는 분자에만 곱해요' : '분자끼리, 분모끼리 곱해요' });
+    const N = a.n * b.n, D = a.d * b.d;
+    out.push({ segs: [fs(D === 1 ? String(N) : `${N}/${D}`, 'B', true)], note: `${nT} = ${N}${D > 1 && dT.includes('×') ? `, ${dT} = ${D}` : ''}` });
+    return mulTail(out, N, D);
+  },
+  intro: () => '분자끼리, 분모끼리 곱하고 약분해 보자!',
+  hint: p => {
+    const A = mx(p.fa), B = mx(p.fb), a = imp(A), b = imp(B);
+    const mixed = (A.w && A.d) || (B.w && B.d);
+    return [`${mixed ? `먼저 대분수를 가분수로 바꾸면 ${impText(A)} × ${impText(B)}. ` : ''}분자끼리 ${a.n} × ${b.n}, 분모끼리 ${a.d} × ${b.d}를 곱해 봐`, `약분까지 하면 얼마일까?`];
+  },
+};
+const fracMulCancel: Strategy = {
+  id: 'fracMulCancel', name: '약분 먼저', sub: '곱하기 전에 약분', when: '수가 클 때 계산이 쉬워져요',
+  applies: p => {
+    if (!isFracMul(p)) return false;
+    const a = imp(mx(p.fa)), b = imp(mx(p.fb));
+    return gcd(a.n, b.d) > 1 || gcd(b.n, a.d) > 1;
+  },
+  lines: p => {
+    const A = mx(p.fa), B = mx(p.fb), a = imp(A), b = imp(B);
+    const g1 = gcd(a.n, b.d), g2 = gcd(b.n, a.d);
+    const a2 = { n: a.n / g1, d: a.d / g2 }, b2 = { n: b.n / g2, d: b.d / g1 };
+    const t = (f: { n: number; d: number }) => (f.d === 1 ? String(f.n) : `${f.n}/${f.d}`);
+    const out: Line[] = [{ segs: [s(`${p.fa} × ${p.fb}`)], note: '곱하기 전에 위아래로 약분해요' }];
+    if ((A.w && A.d) || (B.w && B.d)) out.push({ segs: [fs(impText(A)), s(' × '), fs(impText(B))], note: '대분수를 가분수로 바꿔요' });
+    const why = [g1 > 1 ? `${j.과(a.n)} ${j.을(b.d)} ${j.으로(g1)}` : '', g2 > 1 ? `${j.과(b.n)} ${j.을(a.d)} ${j.으로(g2)}` : ''].filter(Boolean).join(', ');
+    out.push({ segs: [fs(t(a2), 'O'), s(' × '), fs(t(b2), 'O')], note: `${why} 약분해요` });
+    const N = a2.n * b2.n, D = a2.d * b2.d;
+    out.push({ segs: [fs(D === 1 ? String(N) : `${N}/${D}`, 'B', true)], note: '작아진 수끼리 곱해요' });
+    return mulTail(out, N, D);
+  },
+  intro: () => '곱하기 전에 약분부터 해 보자!',
+};
+
+// ─────────────────────────────────────────────
+// 5학년: 소수의 곱셈
+// ─────────────────────────────────────────────
+const isDecMul = (p: P) => isMul(p) && !p.fa && (!Number.isInteger(p.a) || !Number.isInteger(p.b));
+function decMulOf(p: P) {
+  const da = decPlaces(String(p.a)), db = decPlaces(String(p.b));
+  const A = toScaled(String(p.a), da), B = toScaled(String(p.b), db);
+  return { da, db, A, B, P: A * B, dp: da + db };
+}
+const decMulInt: Strategy = {
+  id: 'decMulInt', name: '자연수처럼 곱하기', sub: '곱하고 소수점 찍기', when: '소수점만 잘 찍으면 자연수 곱셈과 같아요',
+  applies: isDecMul,
+  lines: p => {
+    const d = decMulOf(p);
+    const place = (x: number, k: number) => (k ? `${x}는 ${k}자리` : `${x}는 자연수(0자리)`).replace(/^(\S+)는/, (m, v) => `${j.은(v)}`);
+    return [
+      { segs: [s(`${p.a} × ${p.b}`)], note: '소수점을 떼고 자연수처럼 곱해요' },
+      { segs: [s(`${d.A} × ${d.B} = `), s(d.P, 'O', true)], note: `${p.a} → ${d.A}${d.db ? `, ${p.b} → ${d.B}` : ''}`, noEq: true },
+      { segs: [s(`소수점 아래 자릿수: ${d.da} + ${d.db} = `), s(d.dp, 'O', true)], note: `${place(p.a, d.da)}, ${place(p.b, d.db)}`, noEq: true },
+      { segs: [s(decText(d.P, d.dp), 'B', true)], note: (() => { const full = String(d.P).padStart(d.dp + 1, '0'); const t = `${full.slice(0, full.length - d.dp)}.${full.slice(full.length - d.dp)}`; return `${d.P}에서 소수점 아래 ${d.dp}자리 → ${t}${t !== decText(d.P, d.dp) ? ` = ${decText(d.P, d.dp)}` : ''}`; })() },
+    ];
+  },
+  intro: () => '소수점을 떼고 자연수처럼 곱한 다음, 소수점을 찍어 보자!',
+  hint: p => { const d = decMulOf(p); return [`소수점을 떼고 ${d.A} × ${d.B}부터 계산해 봐`, `소수점 아래 자릿수는 ${d.da} + ${d.db} = ${d.dp}자리야. 답은 얼마일까?`]; },
+};
+const decMulFrac: Strategy = {
+  id: 'decMulFrac', name: '분수로 바꿔 곱하기', sub: '10분의, 100분의', when: '왜 자릿수를 더하는지 알 수 있어요',
+  applies: isDecMul,
+  lines: p => {
+    const d = decMulOf(p);
+    const fa = d.da ? `${d.A}/${10 ** d.da}` : String(d.A), fb = d.db ? `${d.B}/${10 ** d.db}` : String(d.B);
+    return [
+      { segs: [s(`${p.a} × ${p.b}`)], note: '소수를 분수로 바꿔요' },
+      { segs: [fs(fa, 'O'), s(' × '), fs(fb, 'O')], note: `${p.a} = ${fa}${d.db ? `, ${p.b} = ${fb}` : ''}` },
+      { segs: [fs(`${d.P}/${10 ** d.dp}`, 'B', true)], note: '분자끼리, 분모끼리 곱해요' },
+      { segs: [s(decText(d.P, d.dp), 'B', true)], note: '분수를 소수로 바꿔요' },
+    ];
+  },
+  intro: () => '소수를 분수로 바꿔서 곱해 보자!',
+};
+
 export const STRATEGIES: Record<string, Strategy> = Object.fromEntries([
   pwAdd, countOn, doubles, pwSub, countBack, addThink, placeAddSub, jumpTens, make10, from10, subSplit,
   comp, placeAdd3, seqSub, column, mulPlusOne, mulSplit, mulNine, mulSwap, mulAdd, mulDist, mulColumn,
   divMul, divShare, divRem, divLong, divEst, decUnits, decColumn, decWhole, decPlace, decSeqSub, unitFrac, wholeFrac,
+  mixOrder, gcdList, lcmList, gcdDivide, lcmDivide, reduceStep, reduceGcd, lcdFrac, prodDen, fracMul, fracMulCancel, decMulInt, decMulFrac,
 ].map(x => [x.id, x]));
 
 // ─────────────────────────────────────────────
@@ -913,6 +1237,13 @@ export const UNIT_PLANS: Record<string, Partial<Record<string, OpPlan>>> = {
   '4-1-2': { '÷': { main: ['divEst'], school: 'divLong', others: [] } },
   '4-2-0': { '+': { main: ['decPlace'], school: 'decColumn', others: ['decUnits'] }, '-': { main: ['decSeqSub'], school: 'decColumn', others: ['decUnits'] } },
   '4-2-1': { '+': { main: ['wholeFrac', 'unitFrac'], others: ['unitFrac'] }, '-': { main: ['wholeFrac', 'unitFrac'], others: ['unitFrac'] } },
+  // 5학년
+  '5-1-1': { mix: { main: ['mixOrder'], others: [] } },
+  '5-1-0': { gcd: { main: ['gcdList'], school: 'gcdDivide', others: [] }, lcm: { main: ['lcmList'], school: 'lcmDivide', others: [] } },
+  '5-1-2': { reduce: { main: ['reduceStep'], others: ['reduceGcd'] } },
+  '5-1-3': { '+': { main: ['lcdFrac'], others: ['prodDen'] }, '-': { main: ['lcdFrac'], others: ['prodDen'] } },
+  '5-2-0': { '×': { main: ['fracMul'], others: ['fracMulCancel'] } },
+  '5-2-1': { '×': { main: ['decMulInt'], others: ['decMulFrac'] } },
 };
 
 export function planFor(unitId: string, op: string): OpPlan | null {

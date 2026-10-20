@@ -83,6 +83,20 @@ function VisualView({ v }: { v: Visual }) {
       </div>
     );
   }
+  if (v.kind === 'fracArea') {
+    // 가로로 cols칸 중 colsOn칸(연하게), 세로로 rows칸 중 rowsOn칸이 겹친 곳(진하게)
+    return (
+      <div className="flex items-center justify-center min-h-[110px]">
+        <div className="grid gap-px bg-slate-400 border border-slate-400" style={{ gridTemplateColumns: `repeat(${v.cols}, 22px)` }}>
+          {Array.from({ length: v.rows * v.cols }).map((_, i) => {
+            const r = Math.floor(i / v.cols), c = i % v.cols;
+            const inC = c < v.colsOn, inR = v.rowsOn != null && r < v.rowsOn;
+            return <div key={i} className={`h-[22px] ${inC && inR ? 'bg-brand-500' : inC ? 'bg-brand-100' : 'bg-white'}`} />;
+          })}
+        </div>
+      </div>
+    );
+  }
   if (v.kind === 'fracSplit') {
     const color = (t: Tone) => t === 'b' ? 'bg-emerald-400' : t === 'r' ? 'bg-orange-400' : 'bg-amber-400';
     return (
@@ -305,7 +319,7 @@ function StrategyCard({ st, p, school }: { st: Strategy; p: P; school?: boolean 
 // 개념 확인: 빈칸 + 자체 키패드
 // ─────────────────────────────────────────────
 interface Slot { key: string; ans: string }
-type CSeg = { text: string } | { blank: string } | { frac: { w?: string; n: string; d: string } };
+type CSeg = { text: string } | { blank: string } | { frac: { w?: string; n: string; d: string; dk?: string } } | { fixed: { w?: string; n: string; d: string } };
 function buildCheck(unitId: string, p: P, qi: number) {
   const st = mainStrategyFor(unitId, p)!;
   const lines = st.lines(p);
@@ -316,12 +330,14 @@ function buildCheck(unitId: string, p: P, qi: number) {
       const key = `${qi}-${li}-${si}`;
       if (li > 0 && sg.blank && sg.f) {
         // 분수 빈칸: 자연수·분자는 빈칸, 분모는 보임
-        const w = sg.f.w ? `${key}-w` : undefined, n = `${key}-n`;
+        const w = sg.f.w ? `${key}-w` : undefined, n = `${key}-n`, dk = sg.blankD ? `${key}-d` : undefined;
         if (w) slots.push({ key: w, ans: sg.f.w! });
         slots.push({ key: n, ans: sg.f.n });
-        return { frac: { w, n, d: sg.f.d } };
+        if (dk) slots.push({ key: dk, ans: sg.f.d });
+        return { frac: { w, n, d: sg.f.d, dk } };
       }
       if (li > 0 && sg.blank) { slots.push({ key, ans: sg.t.trim() }); return { blank: key }; }
+      if (sg.f) return { fixed: sg.f };
       return { text: sg.t };
     }),
   }));
@@ -377,7 +393,8 @@ function ConceptCheck({ unitId, onAllCorrect }: { unitId: string; onAllCorrect: 
                 <div className="flex items-center gap-1 bg-white border-2 border-amber-300 rounded-xl px-3 py-1.5 text-xl md:text-2xl font-black whitespace-nowrap">
                   {bk.segs.map((sg, si) => {
                     if ('blank' in sg) return <React.Fragment key={si}>{blankBtn(sg.blank)}</React.Fragment>;
-                    if ('frac' in sg) return <React.Fragment key={si}><Frac w={sg.frac.w ? blankBtn(sg.frac.w, true) : undefined} n={blankBtn(sg.frac.n, true)} d={<span className="text-[1.6em]">{sg.frac.d}</span>} /></React.Fragment>;
+                    if ('frac' in sg) return <React.Fragment key={si}><Frac w={sg.frac.w ? blankBtn(sg.frac.w, true) : undefined} n={blankBtn(sg.frac.n, true)} d={sg.frac.dk ? blankBtn(sg.frac.dk, true) : <span className="text-[1.6em]">{sg.frac.d}</span>} /></React.Fragment>;
+                    if ('fixed' in sg) return <React.Fragment key={si}><Frac w={sg.fixed.w} n={sg.fixed.n} d={sg.fixed.d} /></React.Fragment>;
                     return <React.Fragment key={si}><MathText text={sg.text} className="whitespace-pre" /></React.Fragment>;
                   })}
                 </div>
@@ -432,8 +449,9 @@ export function ConceptNote({ unitId, done, onClose, onPractice, onDone }: {
     ...plan.others.filter(id => id !== main.id && id !== plan.school).map(id => ({ st: STRATEGIES[id], school: false })),
   ].filter(o => o.st && o.st.applies(p));
   const sym = p.op === '-' ? '−' : p.op;
-  const exText = p.fa !== undefined ? `${p.fa} ${sym} ${p.fb}` : `${p.a} ${sym} ${p.b}`;
-  const exJosa = j.으로(p.fb ?? p.b).slice(String(p.fb ?? p.b).length);
+  const exText = p.e ?? (p.fa !== undefined ? (p.fb !== undefined ? `${p.fa} ${sym} ${p.fb}` : p.fa) : `${p.a} ${sym} ${p.b}`);
+  const lastTok = exText.trim().split(' ').pop() || '';
+  const exJosa = /[가-힣]$/.test(lastTok) ? wordRo(lastTok).slice(lastTok.length) : j.으로(lastTok).slice(lastTok.length);
 
   const next = () => {
     if (step < maxStep) { const n = step + 1; setStep(n); if (n >= maxStep) setShowOther(true); }
@@ -574,10 +592,10 @@ export function ConceptNoteList({ myUnitIds, doneMap, onOpen, onBack }: {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-base font-black text-slate-900">다른 단원 미리보기</h2>
           <div className="flex gap-1.5 flex-wrap">
-            {[1, 2, 3, 4].map(g => (
+            {[1, 2, 3, 4, 5].map(g => (
               <button key={g} onClick={() => setGrade(g)} className={`px-4 py-2 rounded-full text-sm font-bold ${grade === g ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>{g}학년</button>
             ))}
-            <span className="px-4 py-2 rounded-full text-sm font-bold border border-dashed border-slate-300 text-slate-400 flex items-center gap-1"><Lock size={12} />5~6학년 준비 중</span>
+            <span className="px-4 py-2 rounded-full text-sm font-bold border border-dashed border-slate-300 text-slate-400 flex items-center gap-1"><Lock size={12} />6학년 준비 중</span>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{list.map(u => <React.Fragment key={u.id}><Card u={u} /></React.Fragment>)}</div>

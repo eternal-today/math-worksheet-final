@@ -10,7 +10,7 @@
 import {
   Frac, gcd, lcm, reduce, toMixed, decText, fracAdd, fracSub, fracMul, fracDiv,
 } from './frac';
-import { j } from './strategies';
+import { j, mixSteps } from './strategies';
 
 export interface GenProblem46 {
   expr: string; a?: number; b?: number; op: string; ans: string;
@@ -167,6 +167,7 @@ const mixGen: Gen = (_u, diff) => {
     });
     const r = evalMix(e);
     if (r == null || r <= 0 || r > 999) continue;
+    if (mixSteps(e).some(st => st.v <= 1)) continue;   // 중간값이 1이면 (× 1 같은) 싱거운 문제
     // 나눗셈의 "나누어지는 수"는 곱셈 범위를 넘어도 됨 → 위에서 작게 뽑혀 잘 안 맞으므로 따로 맞춤
     return { expr: e, op: 'mix', ans: String(r) };
   }
@@ -181,6 +182,7 @@ function mixDivFix(t: string, diff: number): GenProblem46 | null {
     e = e.replace(/(\d+) ÷ (\d+)/g, (_m, x, y) => `${Number(y) * ri(2, diff === 1 ? 9 : 12)} ÷ ${y}`);
     const r = evalMix(e);
     if (r == null || r <= 0 || r > 999) continue;
+    if (mixSteps(e).some(st => st.v <= 1)) continue;
     return { expr: e, op: 'mix', ans: String(r) };
   }
   return null;
@@ -191,6 +193,7 @@ const gcdGen: Gen = (_u, diff) => {
   const g = ri(2, diff === 1 ? 6 : diff === 2 ? 9 : 15);
   const x = ri(1, diff === 1 ? 5 : 8), y = ri(2, diff === 1 ? 6 : 9);
   if (x === y || gcd(x, y) !== 1) return null;
+  if (Math.min(x, y) === 1 && coin(0.8)) return null;   // 작은 수가 바로 답인 경우는 줄인다
   const a = g * Math.min(x, y), b = g * Math.max(x, y);
   if (b > (diff === 1 ? 40 : diff === 2 ? 72 : 120)) return null;
   return { expr: `${j.과(a)} ${b}의 최대공약수`, a, b, op: 'gcd', ans: String(g), q: true };
@@ -198,6 +201,7 @@ const gcdGen: Gen = (_u, diff) => {
 const lcmGen: Gen = (_u, diff) => {
   const a = ri(2, diff === 1 ? 10 : diff === 2 ? 15 : 24), b = ri(2, diff === 1 ? 12 : diff === 2 ? 18 : 30);
   if (a >= b) return null;
+  if (b % a === 0 && coin(0.8)) return null;   // 큰 수가 바로 답인 경우는 줄인다
   const L = lcm(a, b);
   if (L === a * b && diff > 1 && coin(0.7)) return null;   // 곱이 바로 답인 경우는 줄인다
   if (L > (diff === 1 ? 60 : diff === 2 ? 120 : 300)) return null;
