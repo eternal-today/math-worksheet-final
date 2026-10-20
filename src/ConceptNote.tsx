@@ -7,7 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, ChevronLeft, Delete, Lock } from 'lucide-react';
 import { UNITS } from './constants';
 import { CONCEPT_NOTES, NOTE_BY_UNIT, Panel, Visual, Tone } from './conceptNotes';
-import { STRATEGIES, Strategy, Line, P, Seg, lineText, mainStrategyFor, planFor, columnData, mulColData, j } from './strategies';
+import { STRATEGIES, Strategy, Line, P, Seg, lineText, mainStrategyFor, planFor, columnData, mulColData, mixMarks, j } from './strategies';
 import { MathText, Frac } from './MathText';
 
 /** 한글 단어 뒤 (으)로 */
@@ -84,16 +84,64 @@ function VisualView({ v }: { v: Visual }) {
     );
   }
   if (v.kind === 'fracArea') {
-    // 가로로 cols칸 중 colsOn칸(연하게), 세로로 rows칸 중 rowsOn칸이 겹친 곳(진하게)
+    // 1단계: 세로로 cols칸만 나눠 colsOn칸 칠하기(파랑) → 2단계: 가로로 rows줄 나눠 rowsOn줄(주황), 겹친 곳(보라)
+    const R = v.rowsOn != null ? v.rows : 1;
+    const size = 96;
     return (
       <div className="flex items-center justify-center min-h-[110px]">
-        <div className="grid gap-px bg-slate-400 border border-slate-400" style={{ gridTemplateColumns: `repeat(${v.cols}, 22px)` }}>
-          {Array.from({ length: v.rows * v.cols }).map((_, i) => {
+        <div className="grid gap-[2px] bg-slate-500 border-2 border-slate-500 rounded-sm" style={{ gridTemplateColumns: `repeat(${v.cols}, ${size / v.cols}px)`, gridTemplateRows: `repeat(${R}, ${size / R}px)` }}>
+          {Array.from({ length: R * v.cols }).map((_, i) => {
             const r = Math.floor(i / v.cols), c = i % v.cols;
             const inC = c < v.colsOn, inR = v.rowsOn != null && r < v.rowsOn;
-            return <div key={i} className={`h-[22px] ${inC && inR ? 'bg-brand-500' : inC ? 'bg-brand-100' : 'bg-white'}`} />;
+            return <div key={i} className={inC && inR ? 'bg-violet-500' : inC ? 'bg-brand-200' : inR ? 'bg-amber-200' : 'bg-white'} />;
           })}
         </div>
+      </div>
+    );
+  }
+  if (v.kind === 'mixMarks') {
+    const marks = mixMarks(v.e);
+    return (
+      <div className="flex items-end justify-center gap-1.5 min-h-[110px] text-xl md:text-2xl font-black text-slate-800 whitespace-nowrap">
+        {marks.map((m, i) => (
+          <span key={i} className="flex flex-col items-center">
+            {m.step ? <span className={`w-6 h-6 rounded-full ${MIX_COLOR[m.kind!]} text-white text-xs flex items-center justify-center mb-1`}>{m.step}</span> : <span className="h-7" />}
+            <span className={m.step ? MIX_TEXT[m.kind!] : ''}>{m.tok}</span>
+          </span>
+        ))}
+      </div>
+    );
+  }
+  if (v.kind === 'chips') {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 min-h-[110px]">
+        {v.rows.map((row, ri) => (
+          <div key={ri} className="flex items-center gap-1 flex-wrap justify-center">
+            {row.label && <span className="text-xs font-black text-slate-500 mr-1">{row.label}</span>}
+            {row.items.map((it, i) => (
+              <span key={i} className={`min-w-[28px] h-7 px-1.5 rounded-full flex items-center justify-center text-sm font-black ${it.tag === 'hl' ? 'bg-amber-400 text-white ring-2 ring-amber-500' : it.tag === 'ring' ? 'bg-white text-amber-700 ring-2 ring-amber-400' : 'bg-white text-slate-500 border border-slate-200'}`}>{it.text}</span>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (v.kind === 'fracOp') {
+    const F = ({ n, d }: { n: number; d: number }) => <span className="inline-flex flex-col items-center leading-none text-2xl font-black"><span>{n}</span><span className="self-stretch border-t-[3px] border-slate-700 my-1" /><span>{d}</span></span>;
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 min-h-[110px]">
+        <div className="flex items-center gap-2">
+          <F n={v.from[0]} d={v.from[1]} />
+          <div className="flex flex-col items-center justify-between h-[68px] text-xs font-black text-rose-500">
+            <span>{v.op}{v.k} →</span><span>{v.op}{v.k} →</span>
+          </div>
+          <F n={v.to[0]} d={v.to[1]} />
+        </div>
+        {v.bar && (
+          <div className="flex h-3 w-[84px] border border-slate-400 rounded-sm overflow-hidden bg-white">
+            {Array.from({ length: v.to[1] }).map((_, c) => <div key={c} className={`flex-1 ${c ? 'border-l border-slate-300' : ''} ${c < v.to[0] ? 'bg-amber-400' : ''}`} />)}
+          </div>
+        )}
       </div>
     );
   }
@@ -222,7 +270,26 @@ function VisualView({ v }: { v: Visual }) {
   );
 }
 
-const segClass = (hl?: 'B' | 'O') => hl === 'B' ? 'text-brand-600 bg-brand-100' : hl === 'O' ? 'text-amber-700 bg-amber-100' : '';
+const segClass = (hl?: 'B' | 'O' | 'P') => hl === 'B' ? 'text-brand-600 bg-brand-100' : hl === 'O' ? 'text-amber-700 bg-amber-100' : hl === 'P' ? 'text-violet-700 bg-violet-100' : '';
+/** 혼합 계산 순서 색 */
+const MIX_COLOR = { paren: 'bg-violet-500', muldiv: 'bg-brand-500', addsub: 'bg-amber-500' } as const;
+const MIX_TEXT = { paren: 'text-violet-600', muldiv: 'text-brand-600', addsub: 'text-amber-600' } as const;
+export function MixOrderStrip() {
+  const items = [{ k: 'paren', t: '괄호 ( ) 안' }, { k: 'muldiv', t: '×, ÷' }, { k: 'addsub', t: '+, −' }] as const;
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {items.map((it, i) => (
+        <React.Fragment key={it.k}>
+          {i > 0 && <span className="text-slate-300 font-black">→</span>}
+          <span className={`${MIX_COLOR[it.k]} text-white font-black text-base px-3 py-1.5 rounded-xl flex items-center gap-1.5`}>
+            <span className="w-5 h-5 rounded-full bg-white/90 text-slate-800 text-xs flex items-center justify-center">{i + 1}</span>{it.t}
+          </span>
+        </React.Fragment>
+      ))}
+      <span className="text-sm text-slate-500 font-bold">같은 순서끼리는 앞에서부터</span>
+    </div>
+  );
+}
 
 /** 식 이어 쓰기 (한 줄씩 보이기) */
 function Chain({ lines, upto, compact = false }: { lines: Line[]; upto: number; compact?: boolean }) {
@@ -232,7 +299,7 @@ function Chain({ lines, upto, compact = false }: { lines: Line[]; upto: number; 
         <div key={i} className={compact ? 'flex items-center gap-2 flex-wrap' : 'grid grid-cols-[36px_minmax(0,auto)_minmax(0,1fr)] items-center gap-3'}>
           <div className={`${compact ? 'text-lg w-5' : 'text-2xl'} font-black text-slate-400 text-center`}>{i === 0 ? '' : l.noEq ? '→' : '='}</div>
           <div className={`${compact ? 'text-lg px-2 py-1 rounded-lg' : 'text-2xl md:text-3xl px-3 py-2 rounded-2xl border-2 border-brand-100 bg-white justify-self-start'} font-black whitespace-nowrap inline-flex items-center`}>
-            {l.segs.map((sg, k) => <span key={k} className={`rounded-md px-0.5 inline-flex items-center ${segClass(sg.hl)}`}>{sg.f ? <Frac w={sg.f.w} n={sg.f.n} d={sg.f.d} /> : <MathText text={sg.t} className="whitespace-pre" />}</span>)}
+            {l.segs.map((sg, k) => <span key={k} className={`rounded-md px-0.5 inline-flex items-center ${segClass(sg.hl)}`}>{sg.f ? <Frac w={sg.f.w} n={sg.f.n} d={sg.f.d} /> : <MathText text={sg.t} className="whitespace-pre" nowrap />}</span>)}
           </div>
           {!compact && <div className="text-sm md:text-base font-bold text-slate-500"><MathText text={l.note} /></div>}
         </div>
@@ -395,7 +462,7 @@ function ConceptCheck({ unitId, onAllCorrect }: { unitId: string; onAllCorrect: 
                     if ('blank' in sg) return <React.Fragment key={si}>{blankBtn(sg.blank)}</React.Fragment>;
                     if ('frac' in sg) return <React.Fragment key={si}><Frac w={sg.frac.w ? blankBtn(sg.frac.w, true) : undefined} n={blankBtn(sg.frac.n, true)} d={sg.frac.dk ? blankBtn(sg.frac.dk, true) : <span className="text-[1.6em]">{sg.frac.d}</span>} /></React.Fragment>;
                     if ('fixed' in sg) return <React.Fragment key={si}><Frac w={sg.fixed.w} n={sg.fixed.n} d={sg.fixed.d} /></React.Fragment>;
-                    return <React.Fragment key={si}><MathText text={sg.text} className="whitespace-pre" /></React.Fragment>;
+                    return <React.Fragment key={si}><MathText text={sg.text} className="whitespace-pre" nowrap /></React.Fragment>;
                   })}
                 </div>
               </React.Fragment>
@@ -478,6 +545,7 @@ export function ConceptNote({ unitId, done, onClose, onPractice, onDone }: {
         <div className="bg-brand-50 rounded-2xl p-5">
           <div className="text-sm font-black text-brand-600">{note.term}</div>
           <p className="mt-2 text-lg md:text-xl leading-relaxed font-medium text-slate-800"><Rich text={note.def} /></p>
+          {note.strip === 'mix' && <div className="mt-3"><MixOrderStrip /></div>}
         </div>
         <div className="text-lg font-black text-slate-900 flex items-center flex-wrap"><MathText text={exText} /><span>{exJosa} 알아볼까요?</span></div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

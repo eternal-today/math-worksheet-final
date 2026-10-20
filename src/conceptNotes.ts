@@ -24,6 +24,12 @@ export type Visual =
   | { kind: 'fracSplit'; d: number; wholes: Tone[]; pieces: Tone[] }
   /** 분수 곱셈 넓이 모형: rows×cols 칸, 앞 colsOn칸을 연하게, 그중 위 rowsOn줄을 진하게 */
   | { kind: 'fracArea'; rows: number; cols: number; colsOn: number; rowsOn?: number }
+  /** 혼합 계산 식에 순서 번호·색 붙이기 */
+  | { kind: 'mixMarks'; e: string }
+  /** 수 목록 칩 (ring: 공통인 수, hl: 고른 수) */
+  | { kind: 'chips'; rows: { label?: string; items: { text: string; tag?: 'ring' | 'hl' }[] }[] }
+  /** 분수의 분자·분모에 같은 연산 (÷2 →) */
+  | { kind: 'fracOp'; from: [number, number]; op: '÷' | '×'; k: number; to: [number, number]; bar?: boolean }
   /** 100칸 모눈 (한 칸 = 0.01). groups마다 parts를 이어서 칠함 */
   | { kind: 'grid100'; groups: { parts: { n: number; tone: Tone }[] }[] }
   /** 분수 막대: w개 꽉 찬 막대 + n/d 막대 */
@@ -39,6 +45,8 @@ export interface ConceptNoteData {
   panels: Panel[];
   caution: { text: string; wrong: string; wrongWhy: string; right: string; rightWhy: string };
   checks: Example[];
+  /** 개념 쏙 정의 아래에 붙이는 띠 (mix: 계산 순서 색 띠) */
+  strip?: 'mix';
 }
 
 const ex = (a: number, op: string, b: number, ans?: string): Example => ({
@@ -392,25 +400,25 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
 
   // ───────────── 5학년 1학기 ─────────────
   {
-    unitId: '5-1-1', term: '계산 순서',
-    def: '여러 계산이 섞여 있으면 **괄호 안 → ×, ÷ → +, −** 순서로 계산해요. 같은 순서끼리는 **앞에서부터** 해요. 한 줄에 **하나씩만** 계산하면 틀리지 않아요.',
+    unitId: '5-1-1', term: '계산 순서', strip: 'mix',
+    def: '여러 계산이 섞여 있으면 **정해진 순서**대로 계산해요. 한 줄에 **하나씩만** 계산하면 틀리지 않아요.',
     example: exm('27 + 12 × 3 - 45', '18'),
     panels: [
-      { title: '1. ×부터', visual: { kind: 'expr', text: '27 + 12 × 3 - 45' }, caption: '×가 있으니 12 × 3 = 36부터 계산해요' },
-      { title: '2. 앞에서부터', visual: { kind: 'expr', text: '27 + 36 - 45' }, caption: '남은 +, −는 앞에서부터: 27 + 36 = 63' },
-      { title: '3. 마지막 계산', visual: { kind: 'expr', text: '63 - 45 = 18' }, caption: '하나씩 계산하면 18' },
+      { title: '1. 순서 정하기', visual: { kind: 'mixMarks', e: '27 + 12 × 3 - 45' }, caption: '×가 ①번, 남은 +, −는 앞에서부터 ②, ③번' },
+      { title: '2. ① 12 × 3', visual: { kind: 'expr', text: '27 + 36 - 45' }, caption: '12 × 3 = 36을 먼저 계산했어요. 다음은 ② 27 + 36' },
+      { title: '3. ② 27 + 36, ③ 63 − 45', visual: { kind: 'expr', text: '63 - 45 = 18' }, caption: '27 + 36 = 63, 63 − 45 = 18' },
     ],
     caution: { text: '앞에서부터만 계산하면 ×, ÷의 순서를 놓쳐요.', wrong: '27 + 12 × 3 - 45 = 72', wrongWhy: '27 + 12 = 39를 먼저 해서 39 × 3 − 45로 계산했어요', right: '27 + 36 - 45 = 18', rightWhy: '12 × 3을 먼저 해요' },
     checks: [exm('(18 + 6) ÷ 4 + 5', '11'), exm('40 - 6 × 5 + 2', '12'), exm('8 × (9 - 4) - 15', '25')],
   },
   {
     unitId: '5-1-0', term: '최대공약수와 최소공배수',
-    def: '두 수를 함께 나누어떨어지게 하는 수가 **공약수**, 그중 가장 큰 수가 **최대공약수**예요. 두 수에 공통인 배수 중 가장 작은 수는 **최소공배수**예요.',
+    def: '두 수의 약수를 **각각 모두 쓰고**, 두 목록에 함께 있는 수(**공약수**) 중 가장 큰 수가 **최대공약수**예요. 배수를 각각 써서 처음 함께 나오는 수는 **최소공배수**예요.',
     example: exq(12, 'gcd', 18, '6'),
     panels: [
-      { title: '1. 12의 약수', visual: { kind: 'expr', text: '1, 2, 3, 4, 6, 12' }, caption: '12를 나누어떨어지게 하는 수' },
-      { title: '2. 큰 약수부터 확인', visual: { kind: 'steps', items: [{ text: '18 ÷ 12', tag: 'dim' }, { text: '18 ÷ 6 = 3 ✓', tag: 'hl' }] }, caption: '12는 18을 나누지 못하고, 6은 나눠요' },
-      { title: '3. 최대공약수', visual: { kind: 'expr', text: '최대공약수 6' }, caption: '12 = 6 × 2, 18 = 6 × 3' },
+      { title: '1. 12의 약수', visual: { kind: 'chips', rows: [{ items: ['1', '2', '3', '4', '6', '12'].map(t => ({ text: t })) }] }, caption: '12를 나누어떨어지게 하는 수' },
+      { title: '2. 18의 약수', visual: { kind: 'chips', rows: [{ items: ['1', '2', '3', '6', '9', '18'].map(t => ({ text: t })) }] }, caption: '18을 나누어떨어지게 하는 수' },
+      { title: '3. 둘 다 있는 수 찾기', visual: { kind: 'chips', rows: [{ label: '12', items: ['1', '2', '3', '4', '6', '12'].map(t => ({ text: t, tag: (t === '6' ? 'hl' : ['1', '2', '3'].includes(t) ? 'ring' : undefined) as 'hl' | 'ring' | undefined })) }, { label: '18', items: ['1', '2', '3', '6', '9', '18'].map(t => ({ text: t, tag: (t === '6' ? 'hl' : ['1', '2', '3'].includes(t) ? 'ring' : undefined) as 'hl' | 'ring' | undefined })) }] }, caption: '공약수 1, 2, 3, 6 중 가장 큰 6' },
     ],
     caution: { text: '최대공약수는 두 수보다 클 수 없어요. 크게 나왔다면 최소공배수를 구한 거예요.', wrong: '12와 18의 최대공약수: 36', wrongWhy: '최소공배수를 구했어요', right: '12와 18의 최대공약수: 6', rightWhy: '12 = 6 × 2, 18 = 6 × 3' },
     checks: [exq(16, 'gcd', 24, '8'), exq(15, 'gcd', 25, '5'), exq(18, 'gcd', 27, '9')],
@@ -420,9 +428,9 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
     def: '분자와 분모를 **같은 수로 나누어** 간단하게 하는 것이 약분이에요. 크기는 그대로예요. 1 말고 더 나눌 수 없는 분수가 **기약분수**예요.',
     example: exr('12/18', '2/3'),
     panels: [
-      { title: '1. 12/18', visual: { kind: 'fracBar', items: [{ w: 0, n: 12, d: 18, tone: 'a' }] }, caption: '18칸 중 12칸' },
-      { title: '2. 2로 나누기', visual: { kind: 'fracBar', items: [{ w: 0, n: 6, d: 9, tone: 'a' }] }, caption: '6/9, 칠한 길이는 그대로예요' },
-      { title: '3. 3으로 나누기', visual: { kind: 'fracBar', items: [{ w: 0, n: 2, d: 3, tone: 'a' }] }, caption: '2/3, 더 나눌 수 없어요' },
+      { title: '1. 12/18', visual: { kind: 'fracBar', items: [{ w: 0, n: 12, d: 18, tone: 'a' }] }, caption: '18칸 중 12칸. 12와 18은 둘 다 2로 나눠져요' },
+      { title: '2. 분자, 분모를 2로 나누기', visual: { kind: 'fracOp', from: [12, 18], op: '÷', k: 2, to: [6, 9], bar: true }, caption: '12 ÷ 2 = 6, 18 ÷ 2 = 9 → 6/9 (칠한 길이는 그대로)' },
+      { title: '3. 분자, 분모를 3으로 나누기', visual: { kind: 'fracOp', from: [6, 9], op: '÷', k: 3, to: [2, 3], bar: true }, caption: '6 ÷ 3 = 2, 9 ÷ 3 = 3 → 2/3, 더 나눌 수 없어요' },
     ],
     caution: { text: '분자와 분모는 꼭 같은 수로 나눠야 해요.', wrong: '12/18 = 2/6', wrongWhy: '분자는 6으로, 분모는 3으로 나눴어요', right: '12/18 = 2/3', rightWhy: '분자, 분모를 모두 6으로 나눠요' },
     checks: [exr('8/12', '2/3'), exr('15/25', '3/5'), exr('1 6/9', '1 2/3')],
@@ -442,11 +450,11 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
   // ───────────── 5학년 2학기 ─────────────
   {
     unitId: '5-2-0', term: '분수의 곱셈',
-    def: '분수끼리 곱할 때는 **분자끼리, 분모끼리** 곱하고 약분해요. 자연수는 분자에만 곱하고, 대분수는 **가분수로 바꿔서** 곱해요.',
+    def: '2/3 × 3/4은 **3/4의 2/3**만큼이에요. 분수끼리 곱할 때는 **분자끼리, 분모끼리** 곱하고 약분해요. 자연수는 분자에만 곱하고, 대분수는 **가분수로 바꿔서** 곱해요.',
     example: exf('2/3', '×', '3/4', '1/2'),
     panels: [
-      { title: '1. 3/4 칠하기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3 }, caption: '4칸 중 3칸, 3/4' },
-      { title: '2. 그중 2/3', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, rowsOn: 2 }, caption: '12칸 중 6칸 → 6/12' },
+      { title: '1. 세로로 4칸, 3칸 칠하기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3 }, caption: '전체의 3/4' },
+      { title: '2. 가로로 3줄, 2줄 겹치기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, rowsOn: 2 }, caption: '전체 칸 4 × 3 = 12 (분모끼리), 겹친 칸 3 × 2 = 6 (분자끼리) → 6/12' },
       { title: '3. 약분하기', visual: { kind: 'expr', text: '6/12 = 1/2' }, caption: '6과 12를 6으로 나눠요' },
     ],
     caution: { text: '대분수는 자연수 부분까지 함께 곱해야 해요. 가분수로 바꾸면 안전해요.', wrong: '1 1/2 × 1/3 = 1 1/6', wrongWhy: '자연수 1은 그대로 두고 분수끼리만 곱했어요', right: '1 1/2 × 1/3 = 3/2 × 1/3 = 1/2', rightWhy: '대분수를 가분수로 바꿔요' },
@@ -454,14 +462,14 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
   },
   {
     unitId: '5-2-1', term: '소수의 곱셈',
-    def: '소수점을 떼고 **자연수처럼 곱한** 다음, 두 수의 **소수점 아래 자릿수를 더한 만큼** 소수점을 찍어요.',
+    def: '소수를 **분수로 바꿔** 곱해 보면, 10분의 몇 × 10분의 몇 = **100분의 몇**이 돼요. 100분의 몇은 소수 두 자리예요. 그래서 소수점 아래 자릿수를 **더한 만큼** 소수점을 찍어요.',
     example: ex(1.2, '×', 0.6, '0.72'),
     panels: [
-      { title: '1. 소수점 떼기', visual: { kind: 'expr', text: '1.2 → 12, 0.6 → 6' }, caption: '소수점을 떼면 자연수예요' },
-      { title: '2. 자연수처럼 곱하기', visual: { kind: 'expr', text: '12 × 6 = 72' }, caption: '구구단으로 곱해요' },
-      { title: '3. 소수점 찍기', visual: { kind: 'expr', text: '72 → 0.72' }, caption: '소수점 아래 1 + 1 = 2자리' },
+      { title: '1. 분수로 바꾸기', visual: { kind: 'expr', text: '12/10 × 6/10' }, caption: '1.2 = 12/10, 0.6 = 6/10 (소수 한 자리는 10분의 몇)' },
+      { title: '2. 분자끼리, 분모끼리', visual: { kind: 'expr', text: '12/10 × 6/10 = 72/100' }, caption: '12 × 6 = 72, 10 × 10 = 100' },
+      { title: '3. 소수로 바꾸기', visual: { kind: 'expr', text: '72/100 = 0.72' }, caption: '100분의 몇은 소수 두 자리 → 한 자리 + 한 자리 = 두 자리' },
     ],
-    caution: { text: '소수점 아래 자릿수는 두 수의 자릿수를 더해요.', wrong: '1.2 × 0.6 = 7.2', wrongWhy: '소수점 아래 자릿수를 1자리만 셌어요', right: '1.2 × 0.6 = 0.72', rightWhy: '1자리 + 1자리 = 2자리' },
+    caution: { text: '소수점 아래 자릿수는 두 수의 자릿수를 더해요.', wrong: '1.2 × 0.6 = 7.2', wrongWhy: '10분의 72로 계산했어요. 10 × 10 = 100이에요', right: '1.2 × 0.6 = 0.72', rightWhy: '100분의 72 = 0.72' },
     checks: [ex(2.3, '×', 4, '9.2'), ex(0.8, '×', 1.5, '1.2'), ex(3.25, '×', 6, '19.5')],
   },
 ];

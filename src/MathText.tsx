@@ -21,13 +21,13 @@ export function Frac({ w, n, d, className = '' }: { w?: React.ReactNode; n: Reac
 /** 빼기 기호는 화면에서 −(긴 빼기)로 */
 const pretty = (t: string) => t.replace(/ - /g, ' − ').replace(/^- /, '− ');
 
-export function MathText({ text, className = '' }: { text: string; className?: string }) {
+export function MathText({ text, className = '', nowrap = false }: { text: string; className?: string; nowrap?: boolean }) {
   const s = String(text ?? '');
   if (!hasFrac(s)) return <span className={className}>{pretty(s)}</span>;
   return (
     <span className={`inline-flex items-center flex-wrap ${className}`}>
       {mathTokens(s).map((tk, i) => tk.t === 'txt'
-        ? <span key={i} className="whitespace-pre">{pretty(tk.v)}</span>
+        ? <span key={i} className={nowrap ? 'whitespace-pre' : 'whitespace-pre-wrap'}>{pretty(tk.v)}</span>
         : <React.Fragment key={i}><Frac w={tk.w} n={tk.n} d={tk.d} /></React.Fragment>)}
     </span>
   );

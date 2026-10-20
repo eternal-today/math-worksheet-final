@@ -10,7 +10,7 @@
 /** f: 분수 조각 (빈칸이면 자연수·분자가 빈칸, 분모는 보임) */
 import { decPlaces, toScaled, decText, gcd, lcm } from './frac';
 
-export interface Seg { t: string; hl?: 'B' | 'O'; blank?: boolean; f?: { w?: string; n: string; d: string }; blankD?: boolean }
+export interface Seg { t: string; hl?: 'B' | 'O' | 'P'; blank?: boolean; f?: { w?: string; n: string; d: string }; blankD?: boolean }
 export interface Line { segs: Seg[]; note: string; noEq?: boolean }
 /** fa/fb: 분수(대분수·자연수 포함) 문제의 두 수. 소수 문제는 a, b에 소수 */
 export interface P { a: number; b: number; op: string; ans?: string; fa?: string; fb?: string; e?: string }
@@ -63,7 +63,7 @@ export const j = {
 // ─────────────────────────────────────────────
 // 작은 도우미
 // ─────────────────────────────────────────────
-const s = (t: string | number, hl?: 'B' | 'O', blank?: boolean): Seg => ({ t: String(t), hl, blank });
+const s = (t: string | number, hl?: 'B' | 'O' | 'P', blank?: boolean): Seg => ({ t: String(t), hl, blank });
 const ones = (n: number) => n % 10;
 const tensDigit = (n: number) => Math.floor(n / 10) % 10;
 const floorTo = (n: number, u: number) => Math.floor(n / u) * u;
@@ -905,18 +905,41 @@ export function mixSteps(e: string): MixStep[] {
   return out;
 }
 const isMix = (p: P) => p.op === 'mix' && !!p.e;
-const KIND_WORD = { paren: '괄호 안을 먼저', muldiv: '×, ÷를 먼저', addsub: '앞에서부터' };
+const KIND_WORD = { paren: '① 괄호 안을 먼저', muldiv: '② ×, ÷를 먼저', addsub: '③ +, −는 앞에서부터' };
+/** 순서별 색: 괄호 보라(P), ×÷ 파랑(B), +− 주황(O) */
+export const MIX_HL = { paren: 'P', muldiv: 'B', addsub: 'O' } as const;
+/** 처음 식의 기호마다 몇 번째로 계산하는지와 종류 (개념노트 그림용) */
+export function mixMarks(e: string): { tok: string; step?: number; kind?: MixStep['kind'] }[] {
+  const toks = mixToks(e);
+  let t = toks.map((tok, id) => ({ tok, id }));
+  const mark: Record<number, { step: number; kind: MixStep['kind'] }> = {};
+  for (let step = 1; step < 20 && t.length > 1; step++) {
+    let lo = 0, hi = t.length, inParen = false;
+    const open = t.map(x => x.tok).lastIndexOf('(');
+    if (open >= 0) { lo = open + 1; hi = t.findIndex((x, i) => i > open && x.tok === ')'); inParen = true; }
+    let k = -1;
+    for (let i = lo; i < hi; i++) if (t[i].tok === '×' || t[i].tok === '÷') { k = i; break; }
+    const kind: MixStep['kind'] = inParen ? 'paren' : k >= 0 ? 'muldiv' : 'addsub';
+    if (k < 0) for (let i = lo; i < hi; i++) if (t[i].tok === '+' || t[i].tok === '-') { k = i; break; }
+    mark[t[k].id] = { step, kind };
+    let next = [...t.slice(0, k - 1), { tok: 'v', id: -1 }, ...t.slice(k + 2)];
+    const at = k - 1;
+    if (inParen && next[at - 1]?.tok === '(' && next[at + 1]?.tok === ')') next = [...next.slice(0, at - 1), next[at], ...next.slice(at + 2)];
+    t = next;
+  }
+  return toks.map((tok, id) => ({ tok: tok === '-' ? '−' : tok, ...(mark[id] || {}) }));
+}
 const mixOrder: Strategy = {
   id: 'mixOrder', name: '한 단계씩 계산하기', sub: '괄호 → ×÷ → +−', when: '계산 순서를 지키며 한 번에 하나씩 해요',
   applies: isMix,
   lines: p => {
     const st = mixSteps(p.e!);
-    const out: Line[] = [{ segs: [s(mixStr(mixToks(p.e!)))], note: st.some(x => x.kind === 'paren') ? '괄호 안 → ×, ÷ → +, − 순서로 해요' : st.some(x => x.kind === 'muldiv') ? '×, ÷를 먼저, +, −는 나중에 해요' : '앞에서부터 차례로 해요' }];
+    const out: Line[] = [{ segs: [s(mixStr(mixToks(p.e!)))], note: '① 괄호 → ② ×, ÷ → ③ +, − 순서로 한 단계씩 해요' }];
     st.forEach(x => {
       const pre = x.after.slice(0, x.at), post = x.after.slice(x.at + 1);
       const segs: Seg[] = [];
       if (pre.length) segs.push(s(mixStr(pre) + (pre[pre.length - 1] === '(' ? '' : ' ')));
-      segs.push(s(x.v, 'B', true));
+      segs.push(s(x.v, MIX_HL[x.kind], true));
       if (post.length) segs.push(s((post[0] === ')' ? '' : ' ') + mixStr(post)));
       out.push({ segs, note: `${KIND_WORD[x.kind]}: ${x.l} ${x.op} ${x.r} = ${x.v}` });
     });
@@ -933,40 +956,39 @@ const mixOrder: Strategy = {
 // 5학년: 약수와 배수 (최대공약수 · 최소공배수)
 // ─────────────────────────────────────────────
 const divisorsOf = (n: number) => Array.from({ length: n }, (_, i) => i + 1).filter(d => n % d === 0);
+/** 목록이 길면 앞 몇 개와 … 로 줄임 */
+const listText = (xs: (number | string)[], max = 12) => (xs.length > max ? [...xs.slice(0, max - 1), '…'] : xs).join(', ');
 const gcdList: Strategy = {
-  id: 'gcdList', name: '약수에서 찾기', sub: '큰 약수부터 확인', when: '작은 수의 약수 중 큰 수도 나누는 가장 큰 수를 찾아요',
+  id: 'gcdList', name: '약수를 모두 쓰기', sub: '두 목록에서 공통 찾기', when: '두 수의 약수를 각각 쓰고 둘 다 있는 수를 찾아요',
   applies: p => p.op === 'gcd',
   lines: p => {
     const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b), g = gcd(a, b);
-    const ds = divisorsOf(a), tries = ds.filter(d => d >= g).reverse();
-    const fails = tries.slice(0, -1).map(d => `${b} ÷ ${d} ✗`);
-    const shown = fails.length > 3 ? [...fails.slice(0, 2), '…'] : fails;
+    const da = divisorsOf(a), db = divisorsOf(b), common = da.filter(x => b % x === 0);
     return [
-      { segs: [s(`${j.과(a)} ${b}의 최대공약수`)], note: `${a}의 약수 중에서 찾아요` },
-      { segs: [s(`${a}의 약수: ${ds.join(', ')}`)], note: `${j.을(a)} 나누어떨어지게 하는 수예요`, noEq: true },
-      { segs: [s((shown.length ? shown.join(', ') + ', ' : '') + `${b} ÷ `), s(g, 'O', true), s(' ✓')], note: `큰 약수부터 ${b}도 나누어떨어지는지 봐요 (${b} ÷ ${g} = ${b / g})`, noEq: true },
-      { segs: [s(g, 'B', true)], note: `${j.과(a)} ${j.을(b)} 함께 나누는 가장 큰 수예요` },
+      { segs: [s(`${j.과(a)} ${b}의 최대공약수`)], note: '두 수의 약수를 각각 써요' },
+      { segs: [s(`${a}의 약수: ${listText(da)}`)], note: `${j.을(a)} 나누어떨어지게 하는 수`, noEq: true },
+      { segs: [s(`${b}의 약수: ${listText(db)}`)], note: `${j.을(b)} 나누어떨어지게 하는 수`, noEq: true },
+      { segs: [s(g, 'B', true)], note: `두 목록에 모두 있는 수(공약수) ${common.join(', ')} 중 가장 큰 수` },
     ];
   },
-  intro: p => `${Math.min(p.a, p.b)}의 약수를 큰 것부터 보면서 ${Math.max(p.a, p.b)}도 나누어지는지 확인해 보자!`,
-  hint: p => { const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b); return [`${a}의 약수: ${divisorsOf(a).join(', ')}`, `큰 것부터 ${b}도 나누어떨어지는지 확인해 봐. 처음 되는 수는?`]; },
+  intro: p => `${Math.min(p.a, p.b)}의 약수와 ${Math.max(p.a, p.b)}의 약수를 각각 써 보자!`,
+  hint: p => { const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b); return [`${a}의 약수: ${listText(divisorsOf(a))} / ${b}의 약수: ${listText(divisorsOf(b))}`, `두 목록에 모두 있는 수 중 가장 큰 수는?`]; },
 };
 const lcmList: Strategy = {
-  id: 'lcmList', name: '배수에서 찾기', sub: '큰 수의 배수부터', when: '큰 수의 배수 중 작은 수로도 나누어떨어지는 첫 수를 찾아요',
+  id: 'lcmList', name: '배수를 차례로 쓰기', sub: '두 목록에서 공통 찾기', when: '두 수의 배수를 각각 쓰고 처음 겹치는 수를 찾아요',
   applies: p => p.op === 'lcm',
   lines: p => {
     const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b), L = lcm(a, b);
-    const ms = Array.from({ length: L / b }, (_, i) => b * (i + 1));
-    const shown = ms.length > 7 ? [...ms.slice(0, 3), '…', ...ms.slice(-2)] : ms;
+    const ma = Array.from({ length: L / a + 1 }, (_, i) => a * (i + 1)), mb = Array.from({ length: L / b + 1 }, (_, i) => b * (i + 1));
     return [
-      { segs: [s(`${j.과(a)} ${b}의 최소공배수`)], note: `${b}의 배수에서 찾아요` },
-      { segs: [s(`${b}의 배수: ${shown.join(', ')}`)], note: `${b}씩 커지는 수예요`, noEq: true },
-      { segs: [s(L, 'O', true), s(` ÷ ${a} ✓`)], note: `${j.으로(a)}도 나누어떨어지는 첫 번째 수예요 (${L} ÷ ${a} = ${L / a})`, noEq: true },
-      { segs: [s(L, 'B', true)], note: '두 수의 공통인 배수 중 가장 작은 수예요' },
+      { segs: [s(`${j.과(a)} ${b}의 최소공배수`)], note: '두 수의 배수를 각각 써요' },
+      { segs: [s(`${a}의 배수: ${listText(ma)}, …`)], note: `${a}씩 커져요`, noEq: true },
+      { segs: [s(`${b}의 배수: ${listText(mb)}, …`)], note: `${b}씩 커져요`, noEq: true },
+      { segs: [s(L, 'B', true)], note: '두 목록에 처음으로 함께 나오는 수(공배수 중 가장 작은 수)' },
     ];
   },
-  intro: p => `${Math.max(p.a, p.b)}의 배수를 차례로 쓰면서 ${Math.min(p.a, p.b)}로도 나누어지는지 확인해 보자!`,
-  hint: p => { const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b); return [`${b}의 배수를 ${b}, ${b * 2}, ${b * 3}…처럼 차례로 써 봐`, `그중 ${j.으로(a)}도 나누어떨어지는 첫 수는?`]; },
+  intro: p => `${Math.min(p.a, p.b)}의 배수와 ${Math.max(p.a, p.b)}의 배수를 차례로 써 보자!`,
+  hint: p => { const a = Math.min(p.a, p.b), b = Math.max(p.a, p.b); return [`${a}의 배수: ${a}, ${a * 2}, ${a * 3}… / ${b}의 배수: ${b}, ${b * 2}, ${b * 3}…`, `두 목록에 처음으로 함께 나오는 수는?`]; },
 };
 /** 공약수로 나누기 (학교): 2) 12 18 → 6 9 */
 function ladder(a: number, b: number) {
@@ -1182,19 +1204,23 @@ const decMulInt: Strategy = {
   hint: p => { const d = decMulOf(p); return [`소수점을 떼고 ${d.A} × ${d.B}부터 계산해 봐`, `소수점 아래 자릿수는 ${d.da} + ${d.db} = ${d.dp}자리야. 답은 얼마일까?`]; },
 };
 const decMulFrac: Strategy = {
-  id: 'decMulFrac', name: '분수로 바꿔 곱하기', sub: '10분의, 100분의', when: '왜 자릿수를 더하는지 알 수 있어요',
+  id: 'decMulFrac', name: '분수로 바꿔 곱하기', sub: '10분의, 100분의', when: '왜 소수점 아래 자릿수를 더하는지 알 수 있어요',
   applies: isDecMul,
   lines: p => {
     const d = decMulOf(p);
-    const fa = d.da ? `${d.A}/${10 ** d.da}` : String(d.A), fb = d.db ? `${d.B}/${10 ** d.db}` : String(d.B);
+    const Da = 10 ** d.da, Db = 10 ** d.db;
+    const fa = d.da ? `${d.A}/${Da}` : String(d.A), fb = d.db ? `${d.B}/${Db}` : String(d.B);
+    const word = (k: number) => (k === 1 ? '소수 한 자리는 10분의 몇' : k === 2 ? '소수 두 자리는 100분의 몇' : '자연수는 그대로');
     return [
       { segs: [s(`${p.a} × ${p.b}`)], note: '소수를 분수로 바꿔요' },
-      { segs: [fs(fa, 'O'), s(' × '), fs(fb, 'O')], note: `${p.a} = ${fa}${d.db ? `, ${p.b} = ${fb}` : ''}` },
-      { segs: [fs(`${d.P}/${10 ** d.dp}`, 'B', true)], note: '분자끼리, 분모끼리 곱해요' },
-      { segs: [s(decText(d.P, d.dp), 'B', true)], note: '분수를 소수로 바꿔요' },
+      { segs: [fs(fa, 'O'), s(' × '), fs(fb, 'O')], note: `${p.a} = ${fa}${d.db ? `, ${p.b} = ${fb}` : ''} (${word(d.da)})` },
+      { segs: [fe(`${d.A} × ${d.B}`, d.db && d.da ? `${Da} × ${Db}` : String(Da * Db))], note: d.db && d.da ? `분자끼리, 분모끼리 곱해요: ${Da} × ${Db} = ${Da * Db}` : '자연수는 분자에만 곱해요' },
+      { segs: [fs(`${d.P}/${10 ** d.dp}`, 'B', true)], note: `${d.A} × ${d.B} = ${d.P}` },
+      { segs: [s(decText(d.P, d.dp), 'B', true)], note: `${10 ** d.dp}분의 몇은 소수 ${['', '한', '두', '세', '네'][d.dp]} 자리 (${d.da} + ${d.db} = ${d.dp}자리)` },
     ];
   },
   intro: () => '소수를 분수로 바꿔서 곱해 보자!',
+  hint: p => { const d = decMulOf(p); return [`${p.a} = ${d.da ? `${d.A}/${10 ** d.da}` : d.A}${d.db ? `, ${p.b} = ${d.B}/${10 ** d.db}` : ''}로 바꿔서 곱해 봐`, `분모가 ${10 ** d.dp}이면 소수 ${d.dp}자리야. 답은 얼마일까?`]; },
 };
 
 export const STRATEGIES: Record<string, Strategy> = Object.fromEntries([
@@ -1243,7 +1269,7 @@ export const UNIT_PLANS: Record<string, Partial<Record<string, OpPlan>>> = {
   '5-1-2': { reduce: { main: ['reduceStep'], others: ['reduceGcd'] } },
   '5-1-3': { '+': { main: ['lcdFrac'], others: ['prodDen'] }, '-': { main: ['lcdFrac'], others: ['prodDen'] } },
   '5-2-0': { '×': { main: ['fracMul'], others: ['fracMulCancel'] } },
-  '5-2-1': { '×': { main: ['decMulInt'], others: ['decMulFrac'] } },
+  '5-2-1': { '×': { main: ['decMulFrac'], others: ['decMulInt'] } },
 };
 
 export function planFor(unitId: string, op: string): OpPlan | null {
