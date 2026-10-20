@@ -7,7 +7,7 @@ import React, { useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, ChevronLeft, Delete, Lock } from 'lucide-react';
 import { UNITS } from './constants';
 import { CONCEPT_NOTES, NOTE_BY_UNIT, Panel, Visual, Tone } from './conceptNotes';
-import { STRATEGIES, Strategy, Line, P, Seg, lineText, mainStrategyFor, planFor, columnData, j } from './strategies';
+import { STRATEGIES, Strategy, Line, P, Seg, lineText, mainStrategyFor, planFor, columnData, mulColData, j } from './strategies';
 import { MathText, Frac } from './MathText';
 
 /** 한글 단어 뒤 (으)로 */
@@ -57,17 +57,48 @@ function Dots({ n, tone }: { n: number; tone: Tone }) {
 function VisualView({ v }: { v: Visual }) {
   if (v.kind === 'expr') return <div className={`${v.text.length > 13 ? 'text-xl md:text-2xl' : 'text-2xl md:text-3xl'} font-black tracking-tight text-slate-800 text-center py-6 break-keep`}><MathText text={v.text} /></div>;
   if (v.kind === 'placeTable') {
-    const cell = 'w-9 h-9 flex items-center justify-center';
+    const w = (h: string) => (h === '.' ? 'w-3' : 'w-9');
+    const cell = 'h-9 flex items-center justify-center';
     return (
       <div className="inline-flex flex-col items-end min-h-[110px] justify-center text-xl font-black">
-        <div className="flex text-xs text-slate-400">{['', ...v.heads].map((h, i) => <div key={i} className={cell}>{h}</div>)}</div>
+        <div className="flex text-[10px] leading-tight text-slate-400 text-center">{['', ...v.heads].map((h, i) => <div key={i} className={`${w(h)} ${cell} whitespace-pre-line`}>{h === '.' ? '' : h}</div>)}</div>
         {v.rows.map((r, i) => (
           <div key={i} className="flex">
-            <div className={`${cell} text-slate-400`}>{r.sym || ''}</div>
-            {r.cells.map((c, k) => <div key={k} className={`${cell} rounded-md ${r.tone === 'a' ? 'text-amber-600' : r.tone === 'b' ? 'text-emerald-600' : 'text-slate-700'}`}>{c}</div>)}
+            <div className={`w-9 ${cell} text-slate-400`}>{r.sym || ''}</div>
+            {r.cells.map((c, k) => <div key={k} className={`${w(v.heads[k])} ${cell} rounded-md ${r.faint?.includes(k) ? 'text-slate-300' : r.tone === 'a' ? 'text-amber-600' : r.tone === 'b' ? 'text-emerald-600' : 'text-slate-700'}`}>{c}</div>)}
           </div>
         ))}
-        {v.sumRow && <><div className="h-[3px] bg-slate-700 self-stretch rounded" /><div className="flex text-brand-600"><div className={cell} />{v.sumRow.map((c, k) => <div key={k} className={cell}>{c}</div>)}</div></>}
+        {v.sumRow && <><div className="h-[3px] bg-slate-700 self-stretch rounded" /><div className="flex text-brand-600"><div className={`w-9 ${cell}`} />{v.sumRow.map((c, k) => <div key={k} className={`${w(v.heads[k])} ${cell}`}>{c}</div>)}</div></>}
+      </div>
+    );
+  }
+  if (v.kind === 'steps') {
+    return (
+      <div className="flex flex-col items-stretch gap-1 min-h-[110px] justify-center text-base font-black">
+        {v.items.map((it, i) => (
+          <div key={i} className={`flex items-center justify-between gap-3 px-3 py-1 rounded-lg ${it.tag === 'hl' ? 'bg-amber-100 text-amber-800' : it.tag === 'mark' ? 'text-rose-600 border-y-2 border-dashed border-rose-300' : it.tag === 'dim' ? 'text-slate-300 line-through decoration-2' : 'text-slate-500'}`}>
+            <span>{it.text}</span>{it.side && <span className="text-xs font-bold no-underline">{it.side}</span>}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (v.kind === 'fracSplit') {
+    const color = (t: Tone) => t === 'b' ? 'bg-emerald-400' : t === 'r' ? 'bg-orange-400' : 'bg-amber-400';
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 min-h-[110px] w-full">
+        <div className="border-2 border-dashed border-brand-300 rounded-lg p-1.5 flex flex-col items-center gap-1">
+          <span className="text-[10px] font-black text-brand-500">자연수 막대</span>
+          <div className="flex flex-wrap justify-center gap-1">
+            {v.wholes.map((t, i) => <div key={i} className="flex h-3.5 w-[64px] border border-slate-400 rounded-sm overflow-hidden">{Array.from({ length: v.d }).map((_, c) => <div key={c} className={`flex-1 ${c ? 'border-l border-white/60' : ''} ${color(t)}`} />)}</div>)}
+          </div>
+        </div>
+        <div className="border-2 border-dashed border-amber-400 rounded-lg p-1.5 flex flex-col items-center gap-1">
+          <span className="text-[10px] font-black text-amber-600">분수 조각</span>
+          <div className="flex flex-wrap justify-center gap-0.5">
+            {v.pieces.map((t, i) => <div key={i} className={`h-3.5 w-[12.8px] border border-slate-400 rounded-sm ${color(t)}`} />)}
+          </div>
+        </div>
       </div>
     );
   }
@@ -223,17 +254,45 @@ function ColumnView({ p, dp = 0, dpa = 0, dpb = 0 }: { p: P; dp?: number; dpa?: 
   );
 }
 
+/** 곱셈 세로셈: 가르기의 두 곱을 한 줄씩 (색도 대표 풀이와 같게) */
+function MulColView({ p }: { p: P }) {
+  const d = mulColData(p);
+  const nums = [String(p.a), String(p.b), ...d.rows.map(r => String(r.value)), String(d.total)];
+  const W = Math.max(...nums.map(x => x.length));
+  const cell = 'w-8 h-9 flex items-center justify-center text-2xl font-black';
+  const digits = (n: string | number, faintLast = false) => String(n).padStart(W, ' ').split('').map((c, i, arr) =>
+    <div key={i} className={`${cell} ${faintLast && i === arr.length - 1 && c === '0' ? 'opacity-30' : ''}`}>{c === ' ' ? '' : c}</div>);
+  return (
+    <div className="inline-flex flex-col items-end gap-0.5">
+      <div className="flex"><div className={cell} />{digits(p.a)}</div>
+      <div className="flex"><div className={`${cell} text-slate-400`}>×</div>{digits(p.b)}</div>
+      <div className="h-[3px] bg-slate-700 rounded self-stretch my-1" />
+      {d.rows.map((r, i) => {
+        const tens = d.rows.length === 1 || i === 1;
+        return (
+          <div key={i} className="flex items-center">
+            <span className={`mr-2 text-xs font-black ${tens ? 'text-brand-600' : 'text-amber-700'}`}>{r.label}</span>
+            <div className={`flex rounded-lg ${tens ? 'bg-brand-100 text-brand-700' : 'bg-amber-100 text-amber-800'}`}>{digits(r.value, tens)}</div>
+          </div>
+        );
+      })}
+      {d.rows.length > 1 && <><div className="h-[3px] bg-slate-700 rounded self-stretch my-1" /><div className="flex text-brand-600">{digits(d.total)}</div></>}
+    </div>
+  );
+}
+
 function StrategyCard({ st, p, school }: { st: Strategy; p: P; school?: boolean }) {
   const lines = st.lines(p);
   return (
     <div className="bg-slate-50 rounded-2xl p-5 flex flex-col gap-3">
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-lg font-black text-slate-800">{st.name}</span>
-        {school && <span className="text-[11px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">학교에서 배우는 방법</span>}
+        {st.same ? <span className="text-[11px] font-black text-brand-700 bg-brand-100 px-2 py-0.5 rounded-full">대표 풀이와 같은 계산</span>
+          : school && <span className="text-[11px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">학교에서 배우는 방법</span>}
       </div>
       <div className="text-sm text-slate-500 font-medium">{st.when}</div>
-      {st.render === 'column' ? (st.colOf ? <ColumnView {...st.colOf(p)} /> : <ColumnView p={p} />) : <Chain lines={lines} upto={lines.length} compact />}
-      {st.render === 'column' && (
+      {st.render === 'mulcol' ? <MulColView p={p} /> : st.render === 'column' ? (st.colOf ? <ColumnView {...st.colOf(p)} /> : <ColumnView p={p} />) : <Chain lines={lines} upto={lines.length} compact />}
+      {st.render && (
         <ul className="text-sm text-slate-600 font-medium space-y-1">
           {lines.slice(1, -1).map((l, i) => <li key={i}><MathText text={lineText(l)} /> — {l.note}</li>)}
         </ul>
@@ -424,7 +483,7 @@ export function ConceptNote({ unitId, done, onClose, onPractice, onDone }: {
         {others.length > 0 && (
           <>
             <button onClick={() => setShowOther(v => !v)} className="flex items-center justify-between border-2 border-dashed border-slate-300 rounded-2xl px-5 py-4 text-left active:bg-slate-50">
-              <span className="font-black text-slate-700">다른 방법도 있어요 <span className="text-sm font-medium text-slate-400">{others.map(o => o.st.name).join(' · ')}</span></span>
+              <span className="font-black text-slate-700">{others.every(o => o.st.same) ? '세로로 쓰면 이렇게 돼요' : '다른 방법도 있어요'} <span className="text-sm font-medium text-slate-400">{others.every(o => o.st.same) ? '같은 계산을 모양만 바꿔 써요' : others.map(o => o.st.name).join(' · ')}</span></span>
               <span className="text-sm font-bold text-brand-600 shrink-0">{showOther ? '접기' : '펼쳐 보기'}</span>
             </button>
             {showOther && (

@@ -16,7 +16,12 @@ export type Visual =
   | { kind: 'area'; h: string; parts: { w: number; label: string; value: string }[] }
   | { kind: 'expr'; text: string }
   /** 자릿값 표: heads(천·백·십·일), 줄마다 자리별 숫자 */
-  | { kind: 'placeTable'; heads: string[]; rows: { cells: string[]; tone: Tone; sym?: string }[]; sumRow?: string[] }
+  /** 자릿값 표: heads(천·백·십·일, 소수는 '.' 칸 포함), 줄마다 자리별 숫자. faint: 흐리게 쓸 칸(붙인 0) */
+  | { kind: 'placeTable'; heads: string[]; rows: { cells: string[]; tone: Tone; sym?: string; faint?: number[] }[]; sumRow?: string[] }
+  /** 차례로 써 보는 식 목록 (hl: 고른 줄, mark: 기준 수, dim: 넘는 줄) */
+  | { kind: 'steps'; items: { text: string; tag?: 'hl' | 'mark' | 'dim'; side?: string }[] }
+  /** 분수 나눠 담기: 자연수 막대들과 분수 조각들 */
+  | { kind: 'fracSplit'; d: number; wholes: Tone[]; pieces: Tone[] }
   /** 100칸 모눈 (한 칸 = 0.01). groups마다 parts를 이어서 칠함 */
   | { kind: 'grid100'; groups: { parts: { n: number; tone: Tone }[] }[] }
   /** 분수 막대: w개 꽉 찬 막대 + n/d 막대 */
@@ -160,8 +165,8 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
     example: ex(38, '+', 25),
     panels: [
       { title: '1. 수 모형으로 나타내기', visual: { kind: 'blocks', items: [{ t: 3, o: 8, tone: 'a' }, { t: 2, o: 5, tone: 'b' }] }, caption: '38: 십 모형 3, 일 모형 8 / 25: 십 모형 2, 일 모형 5' },
-      { title: '2. 가르고 모아서 10 만들기', visual: { kind: 'dots', groups: [{ n: 8, tone: 'a', box: true }, { n: 2, tone: 'b', box: true }, { n: 3, tone: 'b' }] }, caption: '일의 자리 5를 2와 3으로 가르고, 8과 2를 모으면 10!' },
-      { title: '3. 10은 십의 자리로 올리기', visual: { kind: 'blocks', items: [{ t: 5, o: 0, tone: 'a' }, { t: 1, o: 0, tone: 'r' }, { t: 0, o: 3, tone: 'b' }] }, caption: '십의 자리 3 + 2 + 1 = 6, 일의 자리 3 → 63' },
+      { title: '2. 가르고 모아서 10 만들기', visual: { kind: 'dots', groups: [{ n: 8, tone: 'a', box: true }, { n: 2, tone: 'b', box: true }, { n: 3, tone: 'b' }] }, caption: '25를 2와 23으로 갈라요. 일 모형 8과 2를 모으면 10, 그래서 38 + 2 = 40' },
+      { title: '3. 10은 십 모형으로 올리기', visual: { kind: 'blocks', items: [{ t: 3, o: 0, tone: 'a' }, { t: 1, o: 0, tone: 'r' }, { t: 2, o: 3, tone: 'b' }] }, caption: '모은 10이 십 모형 1개가 돼요. 40 + 23 = 63' },
     ],
     caution: { text: '가른 두 수를 다시 모으면 원래 수가 되어야 해요. 25를 가를 때 2와 23처럼요.', wrong: '38 + 25 = 65', wrongWhy: '38 + 2 + 25로 계산했어요. 2를 떼어 놓고 25를 그대로 더했어요', right: '38 + 2 + 23 = 63', rightWhy: '2 + 23 = 25 맞는지 확인!' },
     checks: [ex(47, '+', 26), ex(36, '+', 28), ex(19, '+', 45)],
@@ -308,7 +313,7 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
     panels: [
       { title: '1. 4개씩 묶기', visual: { kind: 'expr', text: '29 ÷ 4' }, caption: '29개를 4개씩 묶어요' },
       { title: '2. 7묶음과 1개', visual: { kind: 'array', rows: 7, cols: 4, extra: 1 }, caption: '4 × 7 = 28, 1개가 남아요' },
-      { title: '3. 몫과 나머지', visual: { kind: 'expr', text: '29 ÷ 4 = 7 … 1' }, caption: '몫 7, 나머지 1' },
+      { title: '3. 남은 수가 나머지', visual: { kind: 'expr', text: '29 − 28 = 1' }, caption: '몫 7, 나머지 1 → 29 ÷ 4 = 7 … 1' },
     ],
     caution: { text: '나머지가 나누는 수보다 크면 한 묶음을 더 만들 수 있어요.', wrong: '29 ÷ 4 = 6 … 5', wrongWhy: '나머지 5가 4보다 커요', right: '29 ÷ 4 = 7 … 1', rightWhy: '나머지 1은 4보다 작아요' },
     checks: [ex(23, '÷', 5, '4 … 3'), ex(38, '÷', 6, '6 … 2'), ex(17, '÷', 3, '5 … 2')],
@@ -322,7 +327,7 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
     panels: [
       { title: '1. 자리별로 쓰기', visual: { kind: 'placeTable', heads: ['천', '백', '십', '일'], rows: [{ cells: ['3', '4', '6', '5'], tone: 'a' }, { cells: ['2', '3', '7', '8'], tone: 'b', sym: '+' }] }, caption: '3465와 2378을 자리에 맞춰 써요' },
       { title: '2. 같은 자리끼리', visual: { kind: 'expr', text: '5000 + 700 + 130 + 13' }, caption: '천끼리 5000, 백끼리 700, 십끼리 130, 일끼리 13' },
-      { title: '3. 모두 더하기', visual: { kind: 'expr', text: '3465 + 2378 = 5843' }, caption: '네 수를 더하면 5843' },
+      { title: '3. 모두 더하기', visual: { kind: 'expr', text: '5000 + 700 + 130 + 13 = 5843' }, caption: '자리별로 구한 네 수를 더하면 5843' },
     ],
     caution: { text: '같은 자리끼리 더해서 10이 넘으면 윗자리로 올려야 해요.', wrong: '3465 + 2378 = 5733', wrongWhy: '일의 자리 13, 십의 자리 13에서 1을 올리지 않았어요', right: '3465 + 2378 = 5843', rightWhy: '5000 + 700 + 130 + 13' },
     checks: [ex(2146, '+', 3517), ex(4728, '+', 1395), ex(5604, '+', 2589)],
@@ -340,29 +345,29 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
     checks: [ex(125, '×', 32), ex(214, '×', 43), ex(312, '×', 25)],
   },
   {
-    unitId: '4-1-2', term: '몫 어림하기',
-    def: '두 자리 수로 나눌 때는 나누는 수를 **몇십으로 어림**해서 몫을 짐작해요. 짐작한 몫을 곱해 보고 **크거나 작으면 1씩 고쳐요.**',
-    example: ex(224, '÷', 32),
+    unitId: '4-1-2', term: '몇십으로 바꿔 몫 찾기',
+    def: '두 자리 수로 나눌 때는 나누는 수를 **가까운 몇십**으로 바꿔 생각해요. 몇십 단에서 **넘지 않는 가장 큰 곱**을 찾으면 몫이 보여요. 곱해 보고 **크거나 작으면 고쳐요.**',
+    example: ex(258, '÷', 43),
     panels: [
-      { title: '1. 몇십으로 어림', visual: { kind: 'expr', text: '32 → 30' }, caption: '32는 30에 가까워요' },
-      { title: '2. 몫 짐작하기', visual: { kind: 'expr', text: '30 × 7 = 210' }, caption: '210이 224에 가까우니 몫은 7쯤' },
-      { title: '3. 곱해서 확인', visual: { kind: 'expr', text: '32 × 7 = 224' }, caption: '딱 맞아요! 224 ÷ 32 = 7' },
+      { title: '1. 43을 40으로', visual: { kind: 'expr', text: '43 → 40' }, caption: '43은 40과 가까워요' },
+      { title: '2. 40단에서 찾기', visual: { kind: 'steps', items: [{ text: '40 × 5 = 200' }, { text: '40 × 6 = 240', tag: 'hl' }, { text: '258', tag: 'mark' }, { text: '40 × 7 = 280', tag: 'dim' }] }, caption: '258을 넘지 않는 가장 큰 곱은 240 (280은 넘어요). 몫은 6쯤' },
+      { title: '3. 43으로 확인', visual: { kind: 'expr', text: '43 × 6 = 258' }, caption: '딱 맞아요! 258 ÷ 43 = 6' },
     ],
-    caution: { text: '어림한 몫을 곱해 보고, 남는 수가 나누는 수보다 작은지 꼭 확인해요.', wrong: '252 ÷ 36 = 6 … 36', wrongWhy: '40으로 어림해 6을 썼는데, 남은 36이 나누는 수 36과 같아요', right: '252 ÷ 36 = 7', rightWhy: '36 × 7 = 252, 몫을 1 크게' },
-    checks: [ex(258, '÷', 43), ex(192, '÷', 24), ex(185, '÷', 37)],
+    caution: { text: '찾은 몫을 나누는 수에 곱해 보고, 남는 수가 나누는 수보다 작은지 꼭 확인해요.', wrong: '252 ÷ 36 = 6 … 36', wrongWhy: '40 × 6 = 240에서 6을 그대로 썼는데, 남은 36이 나누는 수 36과 같아요', right: '252 ÷ 36 = 7', rightWhy: '36 × 7 = 252, 몫을 1 늘려요' },
+    checks: [ex(224, '÷', 32), ex(192, '÷', 24), ex(185, '÷', 37)],
   },
   // ───────────── 4학년 2학기 ─────────────
   {
-    unitId: '4-2-0', term: '0.01이 몇 개',
-    def: '소수는 **0.1이나 0.01이 몇 개인지**로 바꾸면 자연수처럼 더하고 뺄 수 있어요. 자릿수가 다르면 **1.5 = 1.50**처럼 끝에 0을 붙여 생각해요.',
+    unitId: '4-2-0', term: '같은 자리끼리',
+    def: '소수도 자연수처럼 **같은 자리끼리** 더하고 빼요. 자릿수가 다르면 **1.5 = 1.50**처럼 끝에 0을 붙여 자리를 맞춰요.',
     example: ex(1.5, '+', 0.37, '1.87'),
     panels: [
-      { title: '1. 모눈으로 보기', visual: { kind: 'grid100', groups: [{ parts: [{ n: 150, tone: 'a' }] }, { parts: [{ n: 37, tone: 'b' }] }] }, caption: '1.5는 0.01이 150개, 0.37은 0.01이 37개' },
-      { title: '2. 모두 모으기', visual: { kind: 'grid100', groups: [{ parts: [{ n: 150, tone: 'a' }, { n: 37, tone: 'b' }] }] }, caption: '150 + 37 = 187칸' },
-      { title: '3. 소수로 읽기', visual: { kind: 'expr', text: '1.5 + 0.37 = 1.87' }, caption: '0.01이 187개면 1.87' },
+      { title: '1. 0을 붙여 자리 맞추기', visual: { kind: 'placeTable', heads: ['일', '.', '소수\n첫째', '소수\n둘째'], rows: [{ cells: ['1', '.', '5', '0'], tone: 'a', faint: [3] }, { cells: ['0', '.', '3', '7'], tone: 'b', sym: '+' }] }, caption: '1.5 = 1.50, 소수점끼리 맞춰 써요' },
+      { title: '2. 같은 자리끼리', visual: { kind: 'expr', text: '1 + 0.8 + 0.07' }, caption: '일의 자리 1, 소수 첫째 자리 0.5 + 0.3 = 0.8, 소수 둘째 자리 0 + 0.07 = 0.07' },
+      { title: '3. 모두 더하기', visual: { kind: 'expr', text: '1 + 0.8 + 0.07 = 1.87' }, caption: '자리별로 구한 세 수를 더하면 1.87' },
     ],
-    caution: { text: '끝자리끼리 맞추면 안 되고, 소수점끼리 맞춰야 해요.', wrong: '1.5 + 0.37 = 0.52', wrongWhy: '1.5를 0.15처럼 끝자리에 맞춰 더했어요', right: '1.5 + 0.37 = 1.87', rightWhy: '1.5 = 1.50, 소수점끼리 맞춰요' },
-    checks: [ex(2.4, '+', 0.85, '3.25'), ex(3.6, '-', 1.25, '2.35'), ex(0.7, '+', 1.46, '2.16')],
+    caution: { text: '끝자리끼리 맞추면 안 되고, 소수점끼리 맞춰야 해요.', wrong: '1.5 + 0.37 = 0.52', wrongWhy: '1.5의 5와 0.37의 7을 끝자리끼리 맞춰 더했어요', right: '1.5 + 0.37 = 1.87', rightWhy: '1.5 = 1.50, 소수점끼리 맞춰요' },
+    checks: [ex(2.4, '+', 0.85, '3.25'), ex(0.7, '+', 1.46, '2.16'), ex(3.16, '+', 1.7, '4.86')],
   },
   {
     unitId: '4-2-1', term: '분모가 같은 분수',
@@ -370,8 +375,8 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
     example: exf('2 3/5', '+', '1 4/5', '4 2/5'),
     panels: [
       { title: '1. 막대로 보기', visual: { kind: 'fracBar', items: [{ w: 2, n: 3, d: 5, tone: 'a' }, { w: 1, n: 4, d: 5, tone: 'b' }] }, caption: '2 3/5와 1 4/5' },
-      { title: '2. 자연수끼리, 분수끼리', visual: { kind: 'expr', text: '3 + 7/5' }, caption: '2 + 1 = 3, 3/5 + 4/5 = 7/5' },
-      { title: '3. 1로 올리기', visual: { kind: 'fracBar', items: [{ w: 4, n: 2, d: 5, tone: 'a' }] }, caption: '7/5 = 1 2/5, 그래서 4 2/5' },
+      { title: '2. 자연수끼리, 분수끼리', visual: { kind: 'fracSplit', d: 5, wholes: ['a', 'a', 'b'], pieces: ['a', 'a', 'a', 'b', 'b', 'b', 'b'] }, caption: '막대 3개, 조각 7개 → 3 + 7/5' },
+      { title: '3. 조각 5개로 막대 하나', visual: { kind: 'fracBar', items: [{ w: 3, n: 0, d: 5, tone: 'a' }, { w: 1, n: 2, d: 5, tone: 'r' }] }, caption: '조각 5개가 모여 막대 1개, 그래서 4 2/5' },
     ],
     caution: { text: '분모끼리 더하면 안 돼요. 1/5이 몇 개인지만 세요.', wrong: '3/5 + 4/5 = 7/10', wrongWhy: '분모 5와 5까지 더했어요', right: '3/5 + 4/5 = 7/5', rightWhy: '1/5이 7개, 분모는 그대로' },
     checks: [exf('1 2/7', '+', '3 6/7', '5 1/7'), exf('4 1/6', '-', '1 5/6', '2 2/6'), exf('3 4/9', '+', '2 3/9', '5 7/9')],
