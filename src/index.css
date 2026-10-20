@@ -74,3 +74,7 @@
   100% { transform: scale(1); }
 }
 .animate-pop { animation: pop 0.15s ease-out; }
+
+/* 작은 글씨 속 분수는 조금 크게 (위아래 숫자가 너무 작아지지 않게) */
+.text-xs .frac-nd, .text-sm .frac-nd { font-size: 0.85em; }
+.text-base .frac-nd, .text-lg .frac-nd { font-size: 0.75em; }

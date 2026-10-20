@@ -7,9 +7,13 @@
  *  - note는 존댓말("~요"로 끝나게). 힌트는 끝의 "요"만 떼어 반말로 쓴다
  */
 
-export interface Seg { t: string; hl?: 'B' | 'O'; blank?: boolean }
+/** f: 분수 조각 (빈칸이면 자연수·분자가 빈칸, 분모는 보임) */
+import { decPlaces, toScaled, decText } from './frac';
+
+export interface Seg { t: string; hl?: 'B' | 'O'; blank?: boolean; f?: { w?: string; n: string; d: string } }
 export interface Line { segs: Seg[]; note: string; noEq?: boolean }
-export interface P { a: number; b: number; op: string; ans?: string }
+/** fa/fb: 분수(대분수·자연수 포함) 문제의 두 수. 소수 문제는 a, b에 소수 */
+export interface P { a: number; b: number; op: string; ans?: string; fa?: string; fb?: string }
 
 export interface Strategy {
   id: string;
@@ -17,6 +21,8 @@ export interface Strategy {
   sub: string;           // 짧은 부제
   when: string;          // 언제 쓰면 좋은지 (존댓말 한 줄)
   render?: 'column';     // 개념노트에서 세로셈 그림으로 그림
+  /** 세로셈 그림에 쓸 정수 문제와 소수 자릿수 (소수 세로셈) */
+  colOf?(p: P): { p: P; dp: number; dpa: number; dpb: number };
   applies(p: P): boolean;
   lines(p: P): Line[];
   intro(p: P): string;   // 힌트 첫 줄 (반말)
@@ -27,6 +33,9 @@ export interface Strategy {
 // 한국어 조사: 숫자를 한자어로 읽었을 때 받침 기준
 // ─────────────────────────────────────────────
 function hasBatchim(n: number | string): boolean {
+  // 분수는 분자를 마지막에 읽는다 ("3/4" → 4분의 3)
+  const fm = String(n).match(/(\d+)\/\d+\s*$/);
+  if (fm) n = fm[1];
   const s = String(n).replace(/[^0-9]/g, '');
   if (!s) return false;
   const last = Number(s[s.length - 1]);
@@ -34,10 +43,13 @@ function hasBatchim(n: number | string): boolean {
   return [1, 3, 6, 7, 8].includes(last);       // 일 삼 육 칠 팔
 }
 function rieul(n: number | string): boolean {  // ㄹ 받침: 일, 칠, 팔
+  const fm = String(n).match(/(\d+)\/\d+\s*$/);
+  if (fm) n = fm[1];
   const s = String(n).replace(/[^0-9]/g, '');
   const last = Number(s[s.length - 1]);
   return [1, 7, 8].includes(last) && last !== 0;
 }
+export { hasBatchim };
 export const j = {
   은: (n: number | string) => `${n}${hasBatchim(n) ? '은' : '는'}`,
   이: (n: number | string) => `${n}${hasBatchim(n) ? '이' : '가'}`,
@@ -311,28 +323,35 @@ const comp: Strategy = {
 };
 
 /** 자리별로 나눠 더하기 (세 자리) */
+const PLACE_KO = ['일', '십', '백', '천'];
 const placeAdd3: Strategy = {
-  id: 'place3', name: '자리별로 더하기', sub: '백·십·일 따로', when: '어떤 세 자리 수든 쓸 수 있어요',
-  applies: p => isAdd(p) && p.a >= 100,
+  id: 'place3', name: '자리별로 더하기', sub: '자리마다 따로', when: '어떤 세 자리, 네 자리 수든 쓸 수 있어요',
+  applies: p => isAdd(p) && p.a >= 100 && Number.isInteger(p.a) && Number.isInteger(p.b),
   lines: p => {
-    const H = floorTo(p.a, 100) + floorTo(p.b, 100);
-    const T = (tensDigit(p.a) + tensDigit(p.b)) * 10;
-    const O = ones(p.a) + ones(p.b);
+    const n = Math.min(4, String(Math.max(p.a, p.b)).length);
+    // 큰 자리부터: 천(4자리일 때) · 백 · 십 · 일
+    const parts = Array.from({ length: n }, (_, k) => {
+      const i = n - 1 - k, u = 10 ** i;
+      const da = i === n - 1 ? Math.floor(p.a / u) : Math.floor(p.a / u) % 10;
+      const db = i === n - 1 ? Math.floor(p.b / u) : Math.floor(p.b / u) % 10;
+      return { i, v: (da + db) * u };
+    });
+    const names = parts.map(x => PLACE_KO[x.i]);
     return [
-      { segs: [s(`${p.a} + ${p.b}`)], note: '백, 십, 일의 자리로 나눠요' },
-      { segs: [s(H, 'B', true), s(' + '), s(T, 'B', true), s(' + '), s(O, 'B', true)], note: `백끼리 ${H}, 십끼리 ${T}, 일끼리 ${O}` },
-      { segs: [s(p.a + p.b, 'B', true)], note: '세 수를 모두 더해요' },
+      { segs: [s(`${p.a} + ${p.b}`)], note: `${names.join(', ')}의 자리로 나눠요` },
+      { segs: parts.flatMap((x, k) => k ? [s(' + '), s(x.v, 'B', true)] : [s(x.v, 'B', true)]), note: parts.map((x, k) => `${names[k]}끼리 ${x.v}`).join(', ') },
+      { segs: [s(p.a + p.b, 'B', true)], note: `${['', '', '두', '세', '네'][n]} 수를 모두 더해요` },
     ];
   },
-  intro: () => `백은 백끼리, 십은 십끼리, 일은 일끼리 더해 보자!`,
+  intro: p => String(Math.max(p.a, p.b)).length >= 4 ? `천은 천끼리, 백은 백끼리, 십은 십끼리, 일은 일끼리 더해 보자!` : `백은 백끼리, 십은 십끼리, 일은 일끼리 더해 보자!`,
 };
 
 /** 빼는 수를 갈라 차례로 빼기 */
 const seqSub: Strategy = {
   id: 'seqSub', name: '차례로 빼기', sub: '빼는 수를 자리별로', when: '어떤 뺄셈이든 쓸 수 있어요',
-  applies: p => isSub(p) && p.b >= 10,
+  applies: p => isSub(p) && p.b >= 10 && Number.isInteger(p.a) && Number.isInteger(p.b),
   lines: p => {
-    const parts = [floorTo(p.b, 100), tensDigit(p.b) * 10, ones(p.b)].filter(v => v > 0);
+    const parts = [floorTo(p.b, 1000), (Math.floor(p.b / 100) % 10) * 100, tensDigit(p.b) * 10, ones(p.b)].filter(v => v > 0);
     const out: Line[] = [{ segs: [s(`${p.a} − ${p.b}`)], note: `${j.을(p.b)} ${parts.slice(0, -1).map(String).concat(j.으로(parts[parts.length - 1])).join(', ')} 갈라요` }];
     out.push({ segs: [s(`${p.a} `), ...parts.map(v => s(`− ${v} `, 'O'))], note: '하나씩 차례로 빼요' });
     let cur = p.a;
@@ -375,16 +394,13 @@ export function columnData(p: P): ColumnData {
   }
   return { top: dig(p.a), bottom: dig(p.b), result: dig(res), marks, sym: isAdd(p) ? '+' : '−', width };
 }
-const column: Strategy = {
-  id: 'column', name: '세로셈', sub: '자리 맞춰 쓰기', when: '수가 커져도 실수 없이 풀 수 있어요', render: 'column',
-  applies: p => (isAdd(p) || isSub(p)) && p.a >= 10,
-  lines: p => {
-    const out: Line[] = [{ segs: [s(`${p.a} ${isAdd(p) ? '+' : '−'} ${p.b}`)], note: '자리를 맞춰 세로로 써요' }];
+function columnLines(p: P, nameOf: (i: number) => string, head: Line, last: Line): Line[] {
+    const out: Line[] = [head];
     const width = String(Math.max(p.a, p.b)).length;
     let carry = 0, borrow = 0;
     for (let i = 0; i < width; i++) {
       const da = Math.floor(p.a / 10 ** i) % 10, db = Math.floor(p.b / 10 ** i) % 10;
-      const nm = placeName(i);
+      const nm = nameOf(i);
       if (isAdd(p)) {
         const sum = da + db + carry;
         const expr = `${da} + ${db}${carry ? ' + 1' : ''} = ${sum}`;
@@ -405,9 +421,15 @@ const column: Strategy = {
         borrow = need ? 1 : 0;
       }
     }
-    out.push({ segs: [s(isAdd(p) ? p.a + p.b : p.a - p.b, 'B', true)], note: '자리별 결과를 이어 읽어요' });
+    out.push(last);
     return out;
-  },
+}
+const column: Strategy = {
+  id: 'column', name: '세로셈', sub: '자리 맞춰 쓰기', when: '수가 커져도 실수 없이 풀 수 있어요', render: 'column',
+  applies: p => (isAdd(p) || isSub(p)) && p.a >= 10 && Number.isInteger(p.a) && Number.isInteger(p.b),
+  lines: p => columnLines(p, placeName,
+    { segs: [s(`${p.a} ${isAdd(p) ? '+' : '−'} ${p.b}`)], note: '자리를 맞춰 세로로 써요' },
+    { segs: [s(isAdd(p) ? p.a + p.b : p.a - p.b, 'B', true)], note: '자리별 결과를 이어 읽어요' }),
   intro: () => `자리를 맞춰 세로로 쓰고, 일의 자리부터 계산해 보자!`,
   hint: p => {
     const all = column.lines(p);
@@ -590,23 +612,202 @@ const divRem: Strategy = {
 /** 세로 나눗셈 (학교) */
 const divLong: Strategy = {
   id: 'divLong', name: '세로 나눗셈', sub: '나눗셈 기호로 쓰기', when: '학교에서 배우는 방법이에요',
-  applies: p => isDiv(p) && hasRemainder(p),
+  applies: p => isDiv(p) && Number.isInteger(p.a) && Number.isInteger(p.b) && (hasRemainder(p) || p.b >= 10),
   lines: p => {
     const q = Math.floor(p.a / p.b), r = p.a % p.b;
     return [
       { segs: [s(`${p.a} ÷ ${p.b}`)], note: '나누는 수를 왼쪽, 나누어지는 수를 안쪽에 써요' },
       { segs: [s(`몫 ${q} → ${p.b} × ${q} = ${p.b * q}`)], note: '몫을 위에 쓰고 곱을 아래에 써요', noEq: true },
-      { segs: [s(`${p.a} − ${p.b * q} = ${r}`)], note: '빼고 남은 수가 나머지예요', noEq: true },
-      { segs: [s(`${q} … ${r}`, 'B', true)], note: `나머지 ${j.은(r)} ${p.b}보다 작아야 해요` },
+      { segs: [s(`${p.a} − ${p.b * q} = ${r}`)], note: r ? '빼고 남은 수가 나머지예요' : '남는 수가 없어요', noEq: true },
+      { segs: r ? [s(`${q} … ${r}`, 'B', true)] : [s(q, 'B', true)], note: r ? `나머지 ${j.은(r)} ${p.b}보다 작아야 해요` : '나누어떨어져요' },
     ];
   },
   intro: () => `세로로 써서 몫과 나머지를 구해 보자!`,
 };
 
+
+// ─────────────────────────────────────────────
+// 4학년: (세 자리)÷(두 자리)
+// ─────────────────────────────────────────────
+
+/** 나누는 수를 몇십으로 어림해 몫 찾기 */
+function estOf(p: P) {
+  const R = Math.round(p.b / 10) * 10 || 10;
+  const q0 = Math.max(1, Math.floor(p.a / R));
+  let q = q0;
+  while (q > 1 && p.b * q > p.a) q--;
+  while (p.b * (q + 1) <= p.a) q++;
+  return { R, q0, q, r: p.a - p.b * q };
+}
+const divEst: Strategy = {
+  id: 'divEst', name: '몫 어림하기', sub: '나누는 수를 몇십으로', when: '두 자리 수로 나눌 때 몫을 빨리 찾아요',
+  applies: p => isDiv(p) && p.b >= 10 && Number.isInteger(p.a),
+  lines: p => {
+    const e = estOf(p);
+    const out: Line[] = [
+      { segs: [s(`${p.a} ÷ ${p.b}`)], note: `${j.을(p.b)} ${j.으로(e.R)} 어림해요` },
+      { segs: [s(`${e.R} × ${e.q0} = ${e.R * e.q0}`)], note: `${e.R} × ${j.이(e.q0)} ${p.a}에 가까워요. 몫은 ${e.q0}쯤`, noEq: true },
+    ];
+    if (e.q0 !== e.q) {
+      out.push({ segs: [s(`${p.b} × ${e.q0} = `), s(p.b * e.q0, 'O', true)], note: p.b * e.q0 > p.a ? `${j.을(p.a)} 넘어서 몫을 1 작게 해요` : `남는 수가 ${p.b}보다 커서 몫을 1 크게 해요`, noEq: true });
+    }
+    out.push({ segs: [s(`${p.b} × ${e.q} = `), s(p.b * e.q, 'O', true)], note: e.r ? `${j.을(p.a)} 넘지 않는 가장 큰 곱이에요` : `${j.과(p.a)} 딱 맞아요`, noEq: true });
+    if (e.r) out.push({ segs: [s(`${p.a} − ${p.b * e.q} = `), s(e.r, 'O', true)], note: `남는 수가 나머지예요 (${p.b}보다 작아요)`, noEq: true });
+    out.push({ segs: e.r ? [s(e.q, 'B', true), s(' … '), s(e.r, 'B', true)] : [s(e.q, 'B', true)], note: e.r ? `몫 ${e.q}, 나머지 ${e.r}` : `몫은 ${e.q}예요`.replace(/(\d)예요$/, (m, d) => `${d}${hasBatchim(d) ? '이에요' : '예요'}`) });
+    return out;
+  },
+  intro: p => { const R = estOf(p).R; return `${j.을(p.b)} ${j.으로(R)} 어림해서 몫을 먼저 짐작해 보자!`; },
+  hint: p => { const R = estOf(p).R; return [`${R} × □가 ${p.a}에 가까워지는 □를 찾아봐`, `찾은 수를 ${p.b}에 곱해서 ${j.을(p.a)} 넘지 않는지 확인해 봐. 몫은 얼마일까?`]; },
+};
+
+// ─────────────────────────────────────────────
+// 4학년: 소수의 덧셈과 뺄셈
+// ─────────────────────────────────────────────
+const isDecProb = (p: P) => (isAdd(p) || isSub(p)) && (!Number.isInteger(p.a) || !Number.isInteger(p.b)) && p.fa === undefined;
+function decOf(p: P) {
+  const dp = Math.max(1, decPlaces(String(p.a)), decPlaces(String(p.b)));
+  const A = toScaled(String(p.a), dp), B = toScaled(String(p.b), dp);
+  const R = isAdd(p) ? A + B : A - B;
+  return { dp, A, B, R, u: dp === 1 ? '0.1' : dp === 2 ? '0.01' : '0.001', sym: isAdd(p) ? '+' : '−' };
+}
+const decUnits: Strategy = {
+  id: 'decUnits', name: '몇 개인지 세기', sub: '0.1·0.01이 몇 개', when: '소수를 자연수처럼 계산할 수 있어요',
+  applies: isDecProb,
+  lines: p => {
+    const d = decOf(p);
+    return [
+      { segs: [s(`${p.a} ${d.sym} ${p.b}`)], note: `${d.u}이 몇 개인지로 바꿔요` },
+      { segs: [s(`${d.u}이 `), s(d.A, 'B', true), s(`개 ${d.sym} ${d.u}이 `), s(d.B, 'O', true), s('개')], note: `${j.은(p.a)} ${d.u}이 ${d.A}개, ${j.은(p.b)} ${d.u}이 ${d.B}개` },
+      { segs: [s(`${d.u}이 `), s(d.R, 'B', true), s('개')], note: `${d.A} ${d.sym} ${d.B} = ${d.R}` },
+      { segs: [s(decText(d.R, d.dp), 'B', true)], note: `${d.u}이 ${d.R}개면 ${decText(d.R, d.dp)}` },
+    ];
+  },
+  intro: p => `${decOf(p).u}이 몇 개인지로 바꾸면 자연수처럼 계산할 수 있어!`,
+  hint: p => { const d = decOf(p); return [`${j.은(p.a)} ${d.u}이 ${d.A}개, ${j.은(p.b)} ${d.u}이 ${d.B}개야`, `${d.u}이 (${d.A} ${d.sym} ${d.B})개면 얼마일까?`]; },
+};
+const decName = (dp: number) => (i: number) => i < dp ? `소수 ${['첫째', '둘째', '셋째'][dp - 1 - i]} 자리` : placeName(i - dp);
+const decColumn: Strategy = {
+  id: 'decColumn', name: '세로셈', sub: '소수점 맞춰 쓰기', when: '소수점끼리 맞추면 자리가 맞아요', render: 'column',
+  applies: isDecProb,
+  colOf: p => { const d = decOf(p); return { p: { a: d.A, b: d.B, op: p.op }, dp: d.dp, dpa: decPlaces(String(p.a)), dpb: decPlaces(String(p.b)) }; },
+  lines: p => {
+    const d = decOf(p);
+    return columnLines({ a: d.A, b: d.B, op: p.op }, decName(d.dp),
+      { segs: [s(`${p.a} ${d.sym} ${p.b}`)], note: '소수점끼리 맞춰 세로로 써요. 빈자리는 0으로 생각해요' },
+      { segs: [s(decText(d.R, d.dp), 'B', true)], note: '소수점을 그대로 내려 찍어요' });
+  },
+  intro: () => `소수점끼리 맞춰 세로로 쓰고, 끝자리부터 계산해 보자!`,
+};
+const decWhole: Strategy = {
+  id: 'decWhole', name: '자연수 부분, 소수 부분', sub: '따로 계산하기', when: '자연수 부분이 있을 때 어림하기도 좋아요',
+  applies: p => {
+    if (!isDecProb(p)) return false;
+    const d = decOf(p), U = 10 ** d.dp;
+    if (Math.floor(d.A / U) === 0 && Math.floor(d.B / U) === 0) return false;
+    return isAdd(p) || d.A % U >= d.B % U;
+  },
+  lines: p => {
+    const d = decOf(p), U = 10 ** d.dp;
+    const ia = Math.floor(d.A / U), ib = Math.floor(d.B / U), fa = d.A % U, fb = d.B % U;
+    const I = isAdd(p) ? ia + ib : ia - ib, Fv = isAdd(p) ? fa + fb : fa - fb;
+    return [
+      { segs: [s(`${p.a} ${d.sym} ${p.b}`)], note: '자연수 부분과 소수 부분으로 나눠요' },
+      { segs: [s(`(${ia} ${d.sym} ${ib})`, 'B'), s(' + '), s(`(${decText(fa, d.dp)} ${d.sym} ${decText(fb, d.dp)})`, 'O')], note: '자연수끼리, 소수끼리 계산해요' },
+      { segs: [s(I, 'B', true), s(' + '), s(decText(Fv, d.dp), 'O', true)], note: `${ia} ${d.sym} ${ib} = ${I}, ${decText(fa, d.dp)} ${d.sym} ${decText(fb, d.dp)} = ${decText(Fv, d.dp)}` },
+      { segs: [s(decText(d.R, d.dp), 'B', true)], note: '두 결과를 더해요' },
+    ];
+  },
+  intro: () => `자연수 부분과 소수 부분을 따로 계산해 보자!`,
+};
+
+// ─────────────────────────────────────────────
+// 4학년: 분모가 같은 분수의 덧셈과 뺄셈
+// ─────────────────────────────────────────────
+interface Mx { w: number; n: number; d: number }   // d = 0 이면 자연수
+function mx(t?: string): Mx {
+  const v = String(t ?? '').trim();
+  const m = v.match(/^(?:(\d+)\s+)?(\d+)\/(\d+)$/);
+  if (m) return { w: m[1] ? Number(m[1]) : 0, n: Number(m[2]), d: Number(m[3]) };
+  return { w: Number(v) || 0, n: 0, d: 0 };
+}
+/** 분수 조각 (빈칸이면 자연수·분자가 빈칸) */
+function fs(text: string, hl?: 'B' | 'O', blank?: boolean): Seg {
+  const m = text.match(/^(?:(\d+) )?(\d+)\/(\d+)$/);
+  if (!m) return s(text, hl, blank);
+  return { t: text, hl, blank, f: { w: m[1], n: m[2], d: m[3] } };
+}
+/** 대분수 글자: w n/d (0인 부분은 뺌) */
+const mxText = (w: number, n: number, d: number) => n === 0 ? String(w) : w === 0 ? `${n}/${d}` : `${w} ${n}/${d}`;
+const isFracSame = (p: P) => (isAdd(p) || isSub(p)) && p.fa !== undefined && p.fb !== undefined && (() => {
+  const A = mx(p.fa), B = mx(p.fb);
+  return !A.d || !B.d || A.d === B.d;
+})();
+const fd = (p: P) => mx(p.fa).d || mx(p.fb).d;
+
+const unitFrac: Strategy = {
+  id: 'unitFrac', name: '단위분수로 세기', sub: '1/□이 몇 개', when: '분모가 같으면 분자만 세면 돼요',
+  applies: isFracSame,
+  lines: p => {
+    const A = mx(p.fa), B = mx(p.fb), d = fd(p);
+    const UA = A.w * d + A.n, UB = B.w * d + B.n, R = isAdd(p) ? UA + UB : UA - UB;
+    const sym = isAdd(p) ? '+' : '−', u = `1/${d}`;
+    const out: Line[] = [
+      { segs: [s(`${p.fa} ${sym} ${p.fb}`)], note: `${u}이 몇 개인지 세어요` },
+      { segs: [s(`${u}이 `), s(UA, 'B', true), s(`개 ${sym} ${u}이 `), s(UB, 'O', true), s('개')], note: `${j.은(p.fa!)} ${u}이 ${UA}개, ${j.은(p.fb!)} ${u}이 ${UB}개` },
+      { segs: [s(`${u}이 `), s(R, 'B', true), s('개')], note: `${UA} ${sym} ${UB} = ${R}` },
+    ];
+    if (R % d === 0) { out.push({ segs: [s(R / d, 'B', true)], note: `${u}이 ${R}개면 ${R / d}` }); return out; }
+    out.push({ segs: [fs(`${R}/${d}`, 'B', true)], note: `${u}이 ${R}개면 ${R}/${d}` });
+    if (R > d) out.push({ segs: [fs(mxText(Math.floor(R / d), R % d, d), 'B', true)], note: `가분수 ${j.은(`${R}/${d}`)} 대분수로 바꿔요` });
+    return out;
+  },
+  intro: p => `분모가 같으니까 1/${fd(p)}이 몇 개인지 세어 보자!`,
+  hint: p => {
+    const A = mx(p.fa), B = mx(p.fb), d = fd(p);
+    const UA = A.w * d + A.n, UB = B.w * d + B.n;
+    return [`${j.은(p.fa!)} 1/${d}이 ${UA}개, ${j.은(p.fb!)} 1/${d}이 ${UB}개야`, `1/${d}이 모두 몇 개가 될까? 분모는 그대로야`];
+  },
+};
+
+const wholeFrac: Strategy = {
+  id: 'wholeFrac', name: '자연수끼리, 분수끼리', sub: '나눠서 계산하기', when: '대분수가 있을 때 좋아요',
+  applies: p => isFracSame(p) && (mx(p.fa).w > 0 || mx(p.fb).w > 0),
+  lines: p => {
+    const A0 = mx(p.fa), B = mx(p.fb), d = fd(p);
+    const sym = isAdd(p) ? '+' : '−';
+    const out: Line[] = [{ segs: [s(`${p.fa} ${sym} ${p.fb}`)], note: `자연수는 자연수끼리, 분수는 분수끼리 ${isAdd(p) ? '더해요' : '빼요'}` }];
+    let A = { ...A0 };
+    if (isSub(p) && A.n < B.n) {
+      // 받아내림: 자연수 1을 d/d로
+      A = { w: A0.w - 1, n: A0.n + d, d };
+      out.push({ segs: [fs(mxText(A.w, A.n, d), 'O'), s(` − ${p.fb}`)], note: A0.n === 0 ? `${j.을(A0.w)} ${j.과(A0.w - 1)} ${j.으로(`${d}/${d}`)} 바꿔요` : `분수끼리 뺄 수 없어서 자연수 1을 ${j.으로(`${d}/${d}`)} 바꿔요` });
+    }
+    const W = isAdd(p) ? A.w + B.w : A.w - B.w, N = isAdd(p) ? A.n + B.n : A.n - B.n;
+    out.push({ segs: [s(`(${A.w} ${sym} ${B.w})`, 'B'), s(' + '), s(`(${A.n}/${d} ${sym} ${B.n}/${d})`, 'O')], note: '자연수 부분과 분수 부분으로 나눠요' });
+    out.push({ segs: [s(W, 'B', true), s(' + '), N === 0 ? s(0, 'O', true) : fs(`${N}/${d}`, 'O', true)], note: `자연수끼리 ${W}, 분수끼리 ${N === 0 ? 0 : `${N}/${d}`}` });
+    if (N >= d) {
+      const extra = Math.floor(N / d), rest = N % d;
+      if (rest) out.push({ segs: [s(`${W} + `), fs(mxText(extra, rest, d), 'O', true)], note: `${j.은(`${N}/${d}`)} 1보다 커요. 대분수로 바꿔요` });
+      out.push({ segs: [fs(mxText(W + extra, rest, d), 'B', true)], note: '자연수끼리 다시 더해요' });
+    } else {
+      out.push({ segs: [fs(mxText(W, N, d), 'B', true)], note: '자연수와 분수를 이어 써요' });
+    }
+    return out;
+  },
+  intro: () => `자연수는 자연수끼리, 분수는 분수끼리 계산해 보자!`,
+  hint: p => {
+    const A = mx(p.fa), B = mx(p.fb), d = fd(p);
+    if (isSub(p) && A.n === 0) return [`${j.을(A.w)} ${j.과(A.w - 1)} ${j.으로(`${d}/${d}`)} 바꿔 봐`, `자연수끼리, 분수끼리 빼면 얼마일까?`];
+    if (isSub(p) && A.n < B.n) return [`${A.n}/${d}에서 ${j.을(`${B.n}/${d}`)} 뺄 수 없어. 자연수 1을 ${j.으로(`${d}/${d}`)} 바꿔 봐`, `자연수끼리, 분수끼리 빼면 얼마일까?`];
+    if (isSub(p)) return [`자연수끼리 (${A.w} − ${B.w}), 분수끼리 (${A.n}/${d} − ${B.n}/${d}) 따로 빼 봐`, `두 결과를 이어 쓰면 얼마일까?`];
+    return [`자연수끼리 (${A.w} + ${B.w}), 분수끼리 (${A.n}/${d} + ${B.n}/${d}) 따로 더해 봐`, `분수 부분이 1보다 크면 대분수로 바꿔야 해. 답은 얼마일까?`];
+  },
+};
+
 export const STRATEGIES: Record<string, Strategy> = Object.fromEntries([
   pwAdd, countOn, doubles, pwSub, countBack, addThink, placeAddSub, jumpTens, make10, from10, subSplit,
   comp, placeAdd3, seqSub, column, mulPlusOne, mulSplit, mulNine, mulSwap, mulAdd, mulDist, mulColumn,
-  divMul, divShare, divRem, divLong,
+  divMul, divShare, divRem, divLong, divEst, decUnits, decColumn, decWhole, unitFrac, wholeFrac,
 ].map(x => [x.id, x]));
 
 // ─────────────────────────────────────────────
@@ -636,6 +837,12 @@ export const UNIT_PLANS: Record<string, Partial<Record<string, OpPlan>>> = {
   '3-1-3': { '×': { main: ['mulDist'], school: 'mulColumn', others: [] } },
   '3-2-0': { '×': { main: ['mulDist'], school: 'mulColumn', others: [] } },
   '3-2-1': { '÷': { main: ['divRem'], school: 'divLong', others: [] } },
+  // 4학년
+  '4-1-0': { '+': { main: ['place3'], school: 'column', others: ['comp'] }, '-': { main: ['seqSub'], school: 'column', others: ['comp'] } },
+  '4-1-1': { '×': { main: ['mulDist'], school: 'mulColumn', others: [] } },
+  '4-1-2': { '÷': { main: ['divEst'], school: 'divLong', others: [] } },
+  '4-2-0': { '+': { main: ['decUnits'], school: 'decColumn', others: ['decWhole'] }, '-': { main: ['decUnits'], school: 'decColumn', others: ['decWhole'] } },
+  '4-2-1': { '+': { main: ['wholeFrac', 'unitFrac'], others: ['unitFrac'] }, '-': { main: ['wholeFrac', 'unitFrac'], others: ['unitFrac'] } },
 };
 
 export function planFor(unitId: string, op: string): OpPlan | null {

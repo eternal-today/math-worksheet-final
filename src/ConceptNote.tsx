@@ -7,7 +7,8 @@ import React, { useMemo, useState } from 'react';
 import { ArrowRight, CheckCircle2, ChevronLeft, Delete, Lock } from 'lucide-react';
 import { UNITS } from './constants';
 import { CONCEPT_NOTES, NOTE_BY_UNIT, Panel, Visual, Tone } from './conceptNotes';
-import { STRATEGIES, Strategy, Line, P, lineText, mainStrategyFor, planFor, columnData, j } from './strategies';
+import { STRATEGIES, Strategy, Line, P, Seg, lineText, mainStrategyFor, planFor, columnData, j } from './strategies';
+import { MathText, Frac } from './MathText';
 
 /** 한글 단어 뒤 (으)로 */
 function wordRo(w: string): string {
@@ -54,7 +55,64 @@ function Dots({ n, tone }: { n: number; tone: Tone }) {
 }
 
 function VisualView({ v }: { v: Visual }) {
-  if (v.kind === 'expr') return <div className={`${v.text.length > 13 ? 'text-xl md:text-2xl' : 'text-2xl md:text-3xl'} font-black tracking-tight text-slate-800 text-center py-6 break-keep`}>{v.text}</div>;
+  if (v.kind === 'expr') return <div className={`${v.text.length > 13 ? 'text-xl md:text-2xl' : 'text-2xl md:text-3xl'} font-black tracking-tight text-slate-800 text-center py-6 break-keep`}><MathText text={v.text} /></div>;
+  if (v.kind === 'placeTable') {
+    const cell = 'w-9 h-9 flex items-center justify-center';
+    return (
+      <div className="inline-flex flex-col items-end min-h-[110px] justify-center text-xl font-black">
+        <div className="flex text-xs text-slate-400">{['', ...v.heads].map((h, i) => <div key={i} className={cell}>{h}</div>)}</div>
+        {v.rows.map((r, i) => (
+          <div key={i} className="flex">
+            <div className={`${cell} text-slate-400`}>{r.sym || ''}</div>
+            {r.cells.map((c, k) => <div key={k} className={`${cell} rounded-md ${r.tone === 'a' ? 'text-amber-600' : r.tone === 'b' ? 'text-emerald-600' : 'text-slate-700'}`}>{c}</div>)}
+          </div>
+        ))}
+        {v.sumRow && <><div className="h-[3px] bg-slate-700 self-stretch rounded" /><div className="flex text-brand-600"><div className={cell} />{v.sumRow.map((c, k) => <div key={k} className={cell}>{c}</div>)}</div></>}
+      </div>
+    );
+  }
+  if (v.kind === 'grid100') {
+    // 한 칸 = 0.01, 모눈 하나 = 1
+    return (
+      <div className="flex flex-wrap items-center justify-center gap-3 min-h-[110px]">
+        {v.groups.map((g, gi) => {
+          const total = g.parts.reduce((t, x) => t + x.n, 0);
+          const cells: Tone[] = g.parts.flatMap(x => Array(x.n).fill(x.tone));
+          const grids = Math.max(1, Math.ceil(total / 100));
+          return (
+            <div key={gi} className="flex gap-1.5">
+              {Array.from({ length: grids }).map((_, k) => (
+                <div key={k} className="grid grid-cols-10 gap-px bg-slate-200 p-px rounded-sm">
+                  {Array.from({ length: 100 }).map((_, c) => {
+                    const t = cells[k * 100 + c];
+                    return <div key={c} className={`w-[6px] h-[6px] ${t ? (t === 'b' ? 'bg-emerald-400' : t === 'r' ? 'bg-orange-400' : 'bg-amber-400') : 'bg-white'}`} />;
+                  })}
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  if (v.kind === 'fracBar') {
+    const color = (t: Tone) => t === 'b' ? 'bg-emerald-400' : t === 'r' ? 'bg-orange-400' : 'bg-amber-400';
+    const bar = (fill: number, d: number, t: Tone, key: string) => (
+      <div key={key} className="flex h-4 w-[84px] border border-slate-400 rounded-sm overflow-hidden bg-white">
+        {Array.from({ length: d }).map((_, c) => <div key={c} className={`flex-1 ${c ? 'border-l border-slate-300' : ''} ${c < fill ? color(t) : ''}`} />)}
+      </div>
+    );
+    return (
+      <div className="flex flex-col items-center justify-center gap-2.5 min-h-[110px]">
+        {v.items.map((it, i) => (
+          <div key={i} className="flex flex-wrap justify-center gap-1">
+            {Array.from({ length: it.w }).map((_, k) => bar(it.d, it.d, it.tone, 'w' + k))}
+            {it.n > 0 && bar(it.n, it.d, it.tone, 'n')}
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (v.kind === 'dots') {
     // 이어진 box 묶음은 하나의 점선 상자로 (예: 8과 2를 모아 10)
     const runs: { box: boolean; groups: typeof v.groups }[] = [];
@@ -128,10 +186,10 @@ function Chain({ lines, upto, compact = false }: { lines: Line[]; upto: number; 
       {lines.map((l, i) => i <= upto && (
         <div key={i} className={compact ? 'flex items-center gap-2 flex-wrap' : 'grid grid-cols-[36px_minmax(0,auto)_minmax(0,1fr)] items-center gap-3'}>
           <div className={`${compact ? 'text-lg w-5' : 'text-2xl'} font-black text-slate-400 text-center`}>{i === 0 ? '' : l.noEq ? '→' : '='}</div>
-          <div className={`${compact ? 'text-lg px-2 py-1 rounded-lg' : 'text-2xl md:text-3xl px-3 py-2 rounded-2xl border-2 border-brand-100 bg-white'} font-black whitespace-nowrap`}>
-            {l.segs.map((sg, k) => <span key={k} className={`rounded-md px-0.5 ${segClass(sg.hl)}`}>{sg.t}</span>)}
+          <div className={`${compact ? 'text-lg px-2 py-1 rounded-lg' : 'text-2xl md:text-3xl px-3 py-2 rounded-2xl border-2 border-brand-100 bg-white justify-self-start'} font-black whitespace-nowrap inline-flex items-center`}>
+            {l.segs.map((sg, k) => <span key={k} className={`rounded-md px-0.5 inline-flex items-center ${segClass(sg.hl)}`}>{sg.f ? <Frac w={sg.f.w} n={sg.f.n} d={sg.f.d} /> : <MathText text={sg.t} className="whitespace-pre" />}</span>)}
           </div>
-          {!compact && <div className="text-sm md:text-base font-bold text-slate-500">{l.note}</div>}
+          {!compact && <div className="text-sm md:text-base font-bold text-slate-500"><MathText text={l.note} /></div>}
         </div>
       ))}
     </div>
@@ -139,16 +197,27 @@ function Chain({ lines, upto, compact = false }: { lines: Line[]; upto: number; 
 }
 
 /** 세로셈 그림 (덧셈·뺄셈) */
-function ColumnView({ p }: { p: P }) {
-  const d = columnData(p);
+/** 세로셈 그림. dp가 있으면 소수점을 찍고, 소수로 바꾸며 붙인 끝자리 0은 흐리게 */
+function ColumnView({ p, dp = 0, dpa = 0, dpb = 0 }: { p: P; dp?: number; dpa?: number; dpb?: number }) {
+  const d0 = columnData(p);
+  const W = Math.max(d0.width, dp + 1);
+  const pad = (arr: number[]) => [...Array(W - arr.length).fill(-1), ...arr];
+  const d = { ...d0, top: pad(d0.top), bottom: pad(d0.bottom), result: pad(d0.result), marks: [...Array(W - d0.marks.length).fill(''), ...d0.marks] };
   const cell = 'w-9 h-10 flex items-center justify-center text-2xl font-black';
-  const row = (arr: number[]) => arr.map((x, i) => <div key={i} className={cell}>{x < 0 ? '' : x}</div>);
+  const dot = (i: number) => dp > 0 && i === W - dp ? <div key={'dot' + i} className="w-2 h-10 flex items-end justify-center pb-1 text-2xl font-black">.</div> : null;
+  const dotGap = (i: number) => dp > 0 && i === W - dp ? <div key={'g' + i} className="w-2" /> : null;
+  const row = (arr: number[], own = dp) => arr.flatMap((x, i) => {
+    const fromRight = W - 1 - i;
+    const zeroPad = dp > 0 && x < 0 && fromRight <= dp;      // 0.37의 일의 자리 0
+    const faint = dp > 0 && fromRight < dp - own;              // 1.5 → 1.50의 끝자리 0
+    return [dot(i), <div key={i} className={`${cell} ${faint ? 'text-slate-300' : ''}`}>{x < 0 ? (zeroPad ? '0' : '') : x}</div>].filter(Boolean);
+  });
   return (
     <div className="inline-flex flex-col items-end">
-      <div className="flex"><div className={cell} />{d.marks.map((m, i) => <div key={i} className="w-9 h-6 flex items-center justify-center text-sm font-black text-orange-500">{m}</div>)}</div>
-      <div className="flex"><div className={cell} />{row(d.top)}</div>
-      <div className="flex"><div className={`${cell} text-slate-400`}>{d.sym}</div>{row(d.bottom)}</div>
-      <div className="h-[3px] bg-slate-800 rounded self-stretch my-1" />
+      <div className="flex"><div className={cell} />{d.marks.flatMap((m, i) => [dotGap(i), <div key={i} className="w-9 h-6 flex items-center justify-center text-sm font-black text-orange-500">{m}</div>].filter(Boolean))}</div>
+      <div className="flex"><div className={cell} />{row(d.top, dpa)}</div>
+      <div className="flex"><div className={`${cell} text-slate-400`}>{d.sym}</div>{row(d.bottom, dpb)}</div>
+      <div className="h-[3px] bg-slate-700 rounded self-stretch my-1" />
       <div className="flex text-brand-600"><div className={cell} />{row(d.result)}</div>
     </div>
   );
@@ -163,10 +232,10 @@ function StrategyCard({ st, p, school }: { st: Strategy; p: P; school?: boolean 
         {school && <span className="text-[11px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">학교에서 배우는 방법</span>}
       </div>
       <div className="text-sm text-slate-500 font-medium">{st.when}</div>
-      {st.render === 'column' ? <ColumnView p={p} /> : <Chain lines={lines} upto={lines.length} compact />}
+      {st.render === 'column' ? (st.colOf ? <ColumnView {...st.colOf(p)} /> : <ColumnView p={p} />) : <Chain lines={lines} upto={lines.length} compact />}
       {st.render === 'column' && (
         <ul className="text-sm text-slate-600 font-medium space-y-1">
-          {lines.slice(1, -1).map((l, i) => <li key={i}>{lineText(l)} — {l.note}</li>)}
+          {lines.slice(1, -1).map((l, i) => <li key={i}><MathText text={lineText(l)} /> — {l.note}</li>)}
         </ul>
       )}
     </div>
@@ -177,14 +246,23 @@ function StrategyCard({ st, p, school }: { st: Strategy; p: P; school?: boolean 
 // 개념 확인: 빈칸 + 자체 키패드
 // ─────────────────────────────────────────────
 interface Slot { key: string; ans: string }
+type CSeg = { text: string } | { blank: string } | { frac: { w?: string; n: string; d: string } };
 function buildCheck(unitId: string, p: P, qi: number) {
   const st = mainStrategyFor(unitId, p)!;
   const lines = st.lines(p);
   const slots: Slot[] = [];
   const blocks = lines.map((l, li) => ({
     sep: li === 0 ? '' : l.noEq ? '→' : '=',
-    segs: l.segs.map((sg, si) => {
-      if (li > 0 && sg.blank) { const key = `${qi}-${li}-${si}`; slots.push({ key, ans: sg.t.trim() }); return { blank: key }; }
+    segs: l.segs.map((sg: Seg, si): CSeg => {
+      const key = `${qi}-${li}-${si}`;
+      if (li > 0 && sg.blank && sg.f) {
+        // 분수 빈칸: 자연수·분자는 빈칸, 분모는 보임
+        const w = sg.f.w ? `${key}-w` : undefined, n = `${key}-n`;
+        if (w) slots.push({ key: w, ans: sg.f.w! });
+        slots.push({ key: n, ans: sg.f.n });
+        return { frac: { w, n, d: sg.f.d } };
+      }
+      if (li > 0 && sg.blank) { slots.push({ key, ans: sg.t.trim() }); return { blank: key }; }
       return { text: sg.t };
     }),
   }));
@@ -199,6 +277,7 @@ function ConceptCheck({ unitId, onAllCorrect }: { unitId: string; onAllCorrect: 
   const [sel, setSel] = useState<string | null>(null);
   const [checked, setChecked] = useState(false);
   const right = allSlots.filter(s => (vals[s.key] || '') === s.ans).length;
+  const needDot = allSlots.some(s => s.ans.includes('.'));
 
   const press = (k: string) => {
     if (!sel) return;
@@ -208,11 +287,23 @@ function ConceptCheck({ unitId, onAllCorrect }: { unitId: string; onAllCorrect: 
       const i = allSlots.findIndex(s => s.key === sel);
       setSel(allSlots[(i + 1) % allSlots.length].key); return;
     }
-    setVals(v => ({ ...v, [sel]: ((v[sel] || '') + k).slice(0, 4) }));
+    setVals(v => ({ ...v, [sel]: ((v[sel] || '') + k).slice(0, 6) }));
   };
   const check = () => {
     setChecked(true); setSel(null);
     if (right === allSlots.length) onAllCorrect();
+  };
+
+  const blankBtn = (key: string, small = false) => {
+    const slot = allSlots.find(s => s.key === key)!;
+    const v = vals[key] || '';
+    const state = checked ? (v === slot.ans ? 'ok' : 'no') : '';
+    return (
+      <button onClick={() => { setSel(key); setChecked(false); }} aria-label="빈칸"
+        className={`${small ? 'min-w-[44px] h-9 text-lg' : 'min-w-[56px] h-11 text-xl'} px-2 rounded-lg border-2 font-black touch-manipulation ${sel === key ? 'border-brand-500 bg-brand-50' : state === 'ok' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : state === 'no' ? 'border-rose-500 bg-rose-50 text-rose-600' : 'border-slate-300 bg-white'}`}>
+        {v || <span className="text-slate-300">□</span>}
+      </button>
+    );
   };
 
   return (
@@ -225,18 +316,11 @@ function ConceptCheck({ unitId, onAllCorrect }: { unitId: string; onAllCorrect: 
               <React.Fragment key={bi}>
                 {bk.sep && <span className="text-2xl font-black text-slate-400 px-3">{bk.sep}</span>}
                 <div className="flex items-center gap-1 bg-white border-2 border-amber-300 rounded-xl px-3 py-1.5 text-xl md:text-2xl font-black whitespace-nowrap">
-                  {bk.segs.map((sg, si) => 'blank' in sg && sg.blank ? (() => {
-                    const key = sg.blank as string;
-                    const slot = allSlots.find(s => s.key === key)!;
-                    const v = vals[key] || '';
-                    const state = checked ? (v === slot.ans ? 'ok' : 'no') : '';
-                    return (
-                      <button key={si} onClick={() => { setSel(key); setChecked(false); }} aria-label="빈칸"
-                        className={`min-w-[56px] h-11 px-2 rounded-lg border-2 text-xl font-black touch-manipulation ${sel === key ? 'border-brand-500 bg-brand-50' : state === 'ok' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : state === 'no' ? 'border-rose-500 bg-rose-50 text-rose-600' : 'border-slate-300 bg-white'}`}>
-                        {v || <span className="text-slate-300">□</span>}
-                      </button>
-                    );
-                  })() : <span key={si} className="whitespace-pre">{(sg as any).text}</span>)}
+                  {bk.segs.map((sg, si) => {
+                    if ('blank' in sg) return <React.Fragment key={si}>{blankBtn(sg.blank)}</React.Fragment>;
+                    if ('frac' in sg) return <React.Fragment key={si}><Frac w={sg.frac.w ? blankBtn(sg.frac.w, true) : undefined} n={blankBtn(sg.frac.n, true)} d={<span className="text-[1.6em]">{sg.frac.d}</span>} /></React.Fragment>;
+                    return <React.Fragment key={si}><MathText text={sg.text} className="whitespace-pre" /></React.Fragment>;
+                  })}
                 </div>
               </React.Fragment>
             ))}
@@ -254,8 +338,8 @@ function ConceptCheck({ unitId, onAllCorrect }: { unitId: string; onAllCorrect: 
       </div>
 
       {sel && (
-        <div className="sticky bottom-0 -mx-4 md:mx-0 bg-white/95 backdrop-blur border-t border-slate-200 md:border md:rounded-2xl p-3 grid grid-cols-6 gap-2 z-10">
-          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map(k => (
+        <div className={`sticky bottom-0 -mx-4 md:mx-0 bg-white/95 backdrop-blur border-t border-slate-200 md:border md:rounded-2xl p-3 grid ${needDot ? 'grid-cols-7' : 'grid-cols-6'} gap-2 z-10`}>
+          {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', ...(needDot ? ['.'] : [])].map(k => (
             <button key={k} onPointerDown={(e) => { e.preventDefault(); press(k); }}
               className="h-12 rounded-xl border-2 border-slate-200 bg-white text-xl font-black active:bg-brand-100 touch-manipulation select-none">{k}</button>
           ))}
@@ -289,6 +373,8 @@ export function ConceptNote({ unitId, done, onClose, onPractice, onDone }: {
     ...plan.others.filter(id => id !== main.id && id !== plan.school).map(id => ({ st: STRATEGIES[id], school: false })),
   ].filter(o => o.st && o.st.applies(p));
   const sym = p.op === '-' ? '−' : p.op;
+  const exText = p.fa !== undefined ? `${p.fa} ${sym} ${p.fb}` : `${p.a} ${sym} ${p.b}`;
+  const exJosa = j.으로(p.fb ?? p.b).slice(String(p.fb ?? p.b).length);
 
   const next = () => {
     if (step < maxStep) { const n = step + 1; setStep(n); if (n >= maxStep) setShowOther(true); }
@@ -316,13 +402,13 @@ export function ConceptNote({ unitId, done, onClose, onPractice, onDone }: {
           <div className="text-sm font-black text-brand-600">{note.term}</div>
           <p className="mt-2 text-lg md:text-xl leading-relaxed font-medium text-slate-800"><Rich text={note.def} /></p>
         </div>
-        <div className="text-lg font-black text-slate-900">{p.a} {sym} {j.으로(p.b)} 알아볼까요?</div>
+        <div className="text-lg font-black text-slate-900 flex items-center flex-wrap"><MathText text={exText} /><span>{exJosa} 알아볼까요?</span></div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {note.panels.map((pn: Panel, i) => (
             <div key={i} className={`rounded-2xl p-4 flex flex-col items-center gap-3 ${['bg-slate-50', 'bg-amber-50', 'bg-emerald-50'][i]}`}>
               <div className="text-sm font-black text-slate-600 text-center">{pn.title}</div>
               <VisualView v={pn.visual} />
-              <div className="text-sm font-bold text-slate-700 text-center leading-relaxed">{pn.caption}</div>
+              <div className="text-sm font-bold text-slate-700 text-center leading-relaxed"><MathText text={pn.caption} /></div>
             </div>
           ))}
         </div>
@@ -355,13 +441,13 @@ export function ConceptNote({ unitId, done, onClose, onPractice, onDone }: {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="bg-rose-50 rounded-2xl p-4 text-center">
             <div className="text-sm font-black text-rose-500">틀린 계산</div>
-            <div className="text-2xl font-black text-rose-700 mt-1">{note.caution.wrong}</div>
-            <div className="text-sm text-rose-600 mt-1">{note.caution.wrongWhy}</div>
+            <div className="text-2xl font-black text-rose-700 mt-1"><MathText text={note.caution.wrong} /></div>
+            <div className="text-sm text-rose-600 mt-1"><MathText text={note.caution.wrongWhy} /></div>
           </div>
           <div className="bg-emerald-50 rounded-2xl p-4 text-center">
             <div className="text-sm font-black text-emerald-600">바른 계산</div>
-            <div className="text-2xl font-black text-emerald-700 mt-1">{note.caution.right}</div>
-            <div className="text-sm text-emerald-700 mt-1">{note.caution.rightWhy}</div>
+            <div className="text-2xl font-black text-emerald-700 mt-1"><MathText text={note.caution.right} /></div>
+            <div className="text-sm text-emerald-700 mt-1"><MathText text={note.caution.rightWhy} /></div>
           </div>
         </div>
       </Section>
@@ -429,10 +515,10 @@ export function ConceptNoteList({ myUnitIds, doneMap, onOpen, onBack }: {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-base font-black text-slate-900">다른 단원 미리보기</h2>
           <div className="flex gap-1.5 flex-wrap">
-            {[1, 2, 3].map(g => (
+            {[1, 2, 3, 4].map(g => (
               <button key={g} onClick={() => setGrade(g)} className={`px-4 py-2 rounded-full text-sm font-bold ${grade === g ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>{g}학년</button>
             ))}
-            <span className="px-4 py-2 rounded-full text-sm font-bold border border-dashed border-slate-300 text-slate-400 flex items-center gap-1"><Lock size={12} />4~6학년 준비 중</span>
+            <span className="px-4 py-2 rounded-full text-sm font-bold border border-dashed border-slate-300 text-slate-400 flex items-center gap-1"><Lock size={12} />5~6학년 준비 중</span>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{list.map(u => <React.Fragment key={u.id}><Card u={u} /></React.Fragment>)}</div>

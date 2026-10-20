@@ -1,4 +1,5 @@
 import { UNITS } from './constants';
+import { GEN46 } from './gen46';
 
 /* ────────────────────────────────────────────────────────────
    수학 문제 생성 엔진 (재설계 v2)
@@ -18,10 +19,6 @@ export function ri(a: number, b: number): number {
 export function gcd(a: number, b: number): number {
   return b === 0 ? a : gcd(b, a % b);
 }
-/** 소수 부동소수점 오차 제거: 소수 첫째 자리로 반올림 고정 */
-function fx1(n: number): number {
-  return Math.round(n * 10) / 10;
-}
 
 // ── 생성 결과 타입 (엔진 내부용) ──
 export interface GenProblem {
@@ -30,6 +27,9 @@ export interface GenProblem {
   b?: number;
   op: string;
   ans: string;
+  fa?: string;   // 분수 문제의 두 수 (풀이 엔진용)
+  fb?: string;
+  q?: boolean;   // "~의 최대공약수"처럼 식 뒤에 "="를 붙이지 않는 문제
 }
 
 interface Unit {
@@ -38,6 +38,7 @@ interface Unit {
   bMin?: number; bMax?: number; qMin?: number; qMax?: number;
   noCarry?: boolean; withCarry?: boolean; noBorrow?: boolean; withBorrow?: boolean;
   maxCarry?: number; minCarry?: number;   // 받아올림(내림) 횟수 제한
+  keys?: string[]; frac?: boolean; fracStrict?: boolean;
 }
 
 /** 난이도(1~3)에 따라 상한을 축소. Easy=0.4, Normal=0.75, Hard=1.0 */
@@ -109,72 +110,8 @@ const GENERATORS: Record<string, Generator> = {
     return { expr: `${a} ÷ ${b}`, a, b, op: "÷", ans: `${q} … ${r}` };
   },
 
-  // 소수 덧셈·뺄셈 (한 자리 소수)
-  "+d": (unit) => genDecAddSub(unit, "+"),
-  "-d": (unit) => genDecAddSub(unit, "-"),
-
-  // 소수 × 정수
-  "×d": (unit) => {
-    const a = fx1(ri(1, unit.max) / 10);   // 0.1 ~ max/10
-    const b = ri(2, 9);
-    const ans = fx1(a * b);
-    if (ans > unit.maxR) return null;
-    // 정수형 결과(5.0)는 소수 학습 의미가 옅어 제외
-    if (Number.isInteger(ans)) return null;
-    return { expr: `${a.toFixed(1)} × ${b}`, a, b, op: "×", ans: ans.toFixed(1) };
-  },
-
-  // 정수 ÷ 정수 = 소수 (몫이 한 자리 소수)
-  "÷d": (unit) => {
-    const b = ri(2, 9);
-    const q = fx1(ri(1, unit.max) / 10);
-    if (Number.isInteger(q)) return null;
-    const a = fx1(q * b);
-    // a가 깔끔한 형태여야 함 (a ÷ b = q 가 정확히 떨어지게)
-    if (fx1(a / b) !== q) return null;
-    return { expr: `${a.toFixed(1)} ÷ ${b}`, a, b, op: "÷", ans: q.toFixed(1) };
-  },
-
-  // 분수 곱셈
-  "×f": (unit) => {
-    const n1 = ri(1, unit.max), d1 = ri(2, 9);
-    const n2 = ri(1, unit.max), d2 = ri(2, 9);
-    const an = n1 * n2, ad = d1 * d2, g = gcd(an, ad);
-    const ans = ad === g ? String(an / g) : `${an / g}/${ad / g}`;
-    return { expr: `${n1}/${d1} × ${n2}/${d2}`, op: "×", ans };
-  },
-
-  // 분수 나눗셈
-  "÷f": (unit) => {
-    const n1 = ri(1, unit.max), d1 = ri(2, 9);
-    const n2 = ri(1, unit.max), d2 = ri(2, 9);
-    if (n2 === 0) return null;
-    const an = n1 * d2, ad = d1 * n2, g = gcd(an, ad);
-    if (ad === 0) return null;
-    const ans = ad === g ? String(an / g) : `${an / g}/${ad / g}`;
-    return { expr: `${n1}/${d1} ÷ ${n2}/${d2}`, op: "÷", ans };
-  },
-
-  // 동분모 분수 덧셈·뺄셈 (진분수 보장, 결과 0 제외)
-  "+f": (unit) => genFracAddSub("+"),
-  "-f": (unit) => genFracAddSub("-"),
-
-  // 비 간단히 / 비례
-  "ratio": (unit, diff) => {
-    const hi = scaledHi(unit, diff);
-    const a = ri(unit.min, hi), b = ri(unit.min, hi);
-    if (a === 0 || b === 0) return null;
-    const g = gcd(a, b);
-    // 이미 기약이면 (간단히 할 게 없으면) 학습 의미가 옅어 제외
-    if (g === 1) return null;
-    return { expr: `${a} : ${b} 를 간단히`, op: ":", ans: `${a / g} : ${b / g}` };
-  },
-
-  // 혼합 계산 (곱셈 먼저)
-  "mix": () => {
-    const a = ri(1, 30), b = ri(2, 9), c = ri(1, 10);
-    return { expr: `${a} + ${b} × ${c}`, op: "mix", ans: String(a + b * c) };
-  },
+  // ── 4~6학년 (아래 GEN46에 모음) ──
+  ...GEN46,
 };
 
 // ── 덧셈/뺄셈 생성기 (받아올림·내림 제약 반영) ──
@@ -216,31 +153,6 @@ export function countCarries(a: number, b: number, sym: "+" | "-"): number {
     n += c;
   }
   return n;
-}
-
-// ── 소수 덧셈/뺄셈 생성기 ──
-function genDecAddSub(unit: Unit, sym: "+" | "-"): GenProblem | null {
-  let a = fx1(ri(1, 99) / 10);
-  let b = fx1(ri(1, 99) / 10);
-  if (sym === "-" && a < b) { const t = a; a = b; b = t; }   // 음수 방지
-  const ans = sym === "+" ? fx1(a + b) : fx1(a - b);
-  if (ans < 0 || ans > unit.maxR) return null;
-  if (sym === "-" && ans === 0) return null;                 // 0 결과 제외
-  return { expr: `${a.toFixed(1)} ${sym} ${b.toFixed(1)}`, a, b, op: sym, ans: ans.toFixed(1) };
-}
-
-// ── 동분모 분수 덧셈/뺄셈 생성기 ──
-function genFracAddSub(sym: "+" | "-"): GenProblem | null {
-  const d = ri(2, 9);
-  const n1 = ri(1, d - 1);
-  const n2 = ri(1, sym === "+" ? d - n1 : n1);   // +는 합이 진분수, -는 n2<=n1
-  const ansN = sym === "+" ? n1 + n2 : n1 - n2;
-  if (ansN <= 0) return null;                    // 결과 0 이하 제외
-  // 기약분수로 약분
-  const g = gcd(ansN, d);
-  const rn = ansN / g, rd = d / g;
-  const ans = rd === 1 ? String(rn) : `${rn}/${rd}`;
-  return { expr: `${n1}/${d} ${sym} ${n2}/${d}`, op: sym, ans };
 }
 
 /* ────────────────────────────────────────────────────────────

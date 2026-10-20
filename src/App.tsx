@@ -13,6 +13,8 @@ import { UNITS, BADGES, GRADE_COLORS } from './constants';
 import { makeProblems } from './mathUtils';
 import { MathProblem, LearningRecord } from './types';
 import { callGemini, safeParseJSON, localHint } from './geminiUtils';
+import { MathText, Frac } from './MathText';
+import { answersMatch } from './frac';
 import { motion, AnimatePresence } from 'motion/react';
 import { ConceptNote, ConceptNoteList } from './ConceptNote';
 import { hasConceptNote } from './conceptNotes';
@@ -164,8 +166,8 @@ const WorksheetPrint = React.forwardRef<HTMLDivElement, { problems: any[]; code?
         <div key={idx} className="flex items-center justify-between border-b-2 border-slate-50 pb-4">
           <div className="flex items-center gap-6">
             <span className="text-xl font-black text-slate-200 font-mono w-8">{String(idx + 1).padStart(2, '0')}</span>
-            <span className="text-4xl font-black tracking-tighter font-display text-slate-800">
-              {p.expr} ＝
+            <span className={`${p.q ? 'text-2xl' : 'text-4xl'} font-black tracking-tighter font-display text-slate-800`}>
+              <MathText text={p.expr} />{p.q ? '' : ' ＝'}
             </span>
           </div>
           <div className="w-24 h-14 border-2 border-slate-100 rounded-xl bg-slate-50/30"></div>
@@ -252,6 +254,9 @@ export default function App() {
   const [quitOpen, setQuitOpen] = useState(false);
   const [savedSession, setSavedSession] = useState<SavedSession | null>(() => readSavedSession());
   const lastKeyAtRef = useRef(0);
+  // 분수 답 입력칸 (자연수 · 분자 · 분모)
+  const [fracIn, setFracIn] = useState({ w: '', n: '', d: '' });
+  const [fracSlot, setFracSlot] = useState<'w' | 'n' | 'd'>('w');
 
   // 개념노트
   const [conceptUnit, setConceptUnit] = useState<string | null>(null);
@@ -601,9 +606,31 @@ export default function App() {
   }, []);
 
   // ── 키패드: 숫자만 저장, 표시는 콤마 자동 (withCommas) ──
+  const curUnit = UNITS.find(u => u.id === unitIdOf(problems[curIdx]));
+  const fracMode = !!curUnit?.frac;
+  useEffect(() => { setFracIn({ w: '', n: '', d: '' }); setFracSlot('w'); }, [curIdx, problems]);
+  /** 분수 칸 → 답 문자열 ("2 1/3", "3/4", "5"). 분자·분모 중 하나만 있으면 아직 답이 아님 */
+  const composeFrac = (f: { w: string; n: string; d: string }) =>
+    (f.n || f.d) ? (f.n && f.d ? `${f.w ? f.w + ' ' : ''}${f.n}/${f.d}` : '') : f.w;
+  const fracPress = (key: string) => {
+    const order: ('w' | 'n' | 'd')[] = ['w', 'n', 'd'];
+    let f = { ...fracIn }, slot = fracSlot;
+    if (key === "C") { f = { w: '', n: '', d: '' }; slot = 'w'; }
+    else if (key === "다음") slot = order[(order.indexOf(slot) + 1) % 3];
+    else if (key === "⌫") {
+      if (!f[slot] && slot !== 'w') slot = order[order.indexOf(slot) - 1];
+      f[slot] = f[slot].slice(0, -1);
+    } else {
+      if ((key === '.' || key === '%') && slot !== 'w') return;   // 소수점·%는 자연수 칸에만
+      if (f[slot].length >= 6) return;
+      f[slot] = f[slot] + key;
+    }
+    setFracIn(f); setFracSlot(slot); setAnsInput(composeFrac(f));
+  };
   const keypadPress = (key: string) => {
     if (isAnsDisabled) return;
     lastKeyAtRef.current = Date.now();
+    if (fracMode) { fracPress(key); return; }
     if (key === "⌫") { setAnsInput(v => v.slice(0, -1)); return; }
     if (key === "C") { setAnsInput(""); return; }
     setAnsInput(v => (v.length >= 14 ? v : v + key));
@@ -618,13 +645,16 @@ export default function App() {
   const specialKeys = (() => {
     const p = problems[curIdx];
     if (!p) return [];
-    const keys: string[] = [];
+    const keys: string[] = fracMode ? ["다음"] : [];
+    // 단원에서 늘 쓰는 키는 답과 상관없이 보여줌 (답 모양이 키로 드러나지 않게)
+    ((curUnit as { keys?: string[] } | undefined)?.keys || []).forEach(k => keys.push(k));
     const a = String(p.ans);
     if (a.includes(".")) keys.push(".");
-    if (a.includes("/")) keys.push("/");
+    if (a.includes("/") && !fracMode) keys.push("/");
     if (a.includes(":")) keys.push(":");
     if (a.includes("…")) keys.push("…");
-    return keys;
+    if (a.includes("%")) keys.push("%");
+    return Array.from(new Set(keys));
   })();
 
   // 무료 힌트: 문제 수의 20% (20문제 → 4개). 다 쓰면 별 1개로 힌트 1개.
@@ -648,8 +678,8 @@ export default function App() {
     // 개념노트가 있는 단원: 단원의 대표 풀이로 규칙 기반 힌트 (계산은 코드가, 답은 비움)
     const uid = unitIdOf(p);
     setHintUnitId(uid && hasConceptNote(uid) ? uid : null);
-    if (uid && p.a !== undefined && p.b !== undefined) {
-      const sh = strategyHint(uid, { a: p.a, b: p.b, op: p.op, ans: p.ans });
+    if (uid && ((p.a !== undefined && p.b !== undefined) || p.fa !== undefined)) {
+      const sh = strategyHint(uid, { a: p.a ?? 0, b: p.b ?? 0, op: p.op, ans: p.ans, fa: p.fa, fb: p.fb });
       if (sh) { setHint(sh.text); return; }
     }
 
@@ -712,12 +742,8 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
     // 숫자를 누르다 손가락이 미끄러져 확인이 눌리는 것 방지
     if (Date.now() - lastKeyAtRef.current < 400) return;
     const p = problems[curIdx];
-    // 콤마·공백 제거 후 비교. 순수 숫자는 수치 비교도 허용.
-    const ansIsPureNumber = /^-?\d+(\.\d+)?$/.test(normalize(String(p.ans)));
-    const inputNorm = normalize(ansInput);
-    const ok = normalize(String(p.ans)) === inputNorm ||
-               (ansIsPureNumber && /^-?\d+(\.\d+)?$/.test(inputNorm) &&
-                parseFloat(normalize(String(p.ans))) === parseFloat(inputNorm));
+    // 콤마·공백 무시, 숫자·분수는 값으로 비교 (약분 단원만 기약분수여야 정답)
+    const ok = answersMatch(String(p.ans), ansInput, !!(curUnit as { fracStrict?: boolean } | undefined)?.fracStrict);
 
     setIsAnsDisabled(true);
     setFeedbackIcon(ok ? 'check' : 'x');
@@ -1218,7 +1244,7 @@ ${wrongSummary}
                               <div key={i} className={`p-4 rounded-2xl border flex justify-between items-center ${selectedRecord.answers?.[i]?.ok ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
                                 <div className="flex items-center gap-4">
                                   <span className="text-xs font-bold text-slate-400 w-4">{i + 1}</span>
-                                  <span className="font-bold text-slate-700">{p.expr} = {withCommas(String(p.ans))}</span>
+                                  <span className="font-bold text-slate-700"><MathText text={p.expr} /> {p.q ? '→' : '='} <MathText text={withCommas(String(p.ans))} /></span>
                                 </div>
                                 <div className="flex items-center gap-4">
                                   <div className="text-right">
@@ -1451,8 +1477,8 @@ ${wrongSummary}
                     <AnimatePresence mode="wait">
                       <motion.div key={curIdx} initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} exit={{ x: -20, opacity: 0 }}
                         className="shrink-0 flex flex-col landscape:flex-row landscape:flex-wrap items-center justify-center gap-4 landscape:gap-x-5 landscape:gap-y-3 w-full">
-                        <div className="text-[clamp(1.75rem,7vw,3.25rem)] font-black text-slate-900 font-display tracking-tight text-center leading-tight break-keep">
-                          {problems[curIdx].expr} <span className="text-brand-500">＝</span>
+                        <div className={`${problems[curIdx].q ? 'text-[clamp(1.35rem,5vw,2.4rem)]' : 'text-[clamp(1.75rem,7vw,3.25rem)]'} font-black text-slate-900 font-display tracking-tight text-center leading-tight break-keep`}>
+                          <MathText text={problems[curIdx].expr} />{!problems[curIdx].q && <span className="text-brand-500"> ＝</span>}
                         </div>
                         <div className="relative w-full max-w-[280px] landscape:w-48 landscape:shrink-0">
                           <div className={`w-full text-center text-[clamp(2rem,9vw,3.5rem)] font-black font-display rounded-2xl py-2 px-3 border-b-4 transition-all min-h-[4rem] flex items-center justify-center ${
@@ -1460,7 +1486,25 @@ ${wrongSummary}
                               ? (answers[curIdx]?.ok ? 'border-emerald-500 text-emerald-600 bg-emerald-50' : 'border-rose-500 text-rose-600 bg-rose-50')
                               : 'border-slate-200 text-slate-900 bg-slate-50'
                           }`}>
-                            {ansInput ? withCommas(ansInput) : <span className="text-slate-300">?</span>}
+                            {fracMode && !isAnsDisabled ? (
+                              <div className="flex items-center justify-center gap-2 py-1">
+                                <button {...tap(() => setFracSlot('w'))} aria-label="자연수 칸"
+                                  className={`min-w-[3.2rem] h-16 px-2 rounded-xl border-2 text-[2rem] leading-none touch-manipulation ${fracSlot === 'w' ? 'border-brand-500 bg-white' : 'border-slate-200 bg-white/60'}`}>
+                                  {fracIn.w || <span className="text-slate-300 text-xl">□</span>}
+                                </button>
+                                <div className="flex flex-col items-stretch gap-1">
+                                  {(['n', 'd'] as const).map((k, i) => (
+                                    <React.Fragment key={k}>
+                                      {i === 1 && <div className="h-[3px] bg-slate-700 rounded" />}
+                                      <button {...tap(() => setFracSlot(k))} aria-label={k === 'n' ? '분자 칸' : '분모 칸'}
+                                        className={`min-w-[3rem] h-11 px-2 rounded-lg border-2 text-2xl leading-none touch-manipulation ${fracSlot === k ? 'border-brand-500 bg-white' : 'border-slate-200 bg-white/60'}`}>
+                                        {fracIn[k] || <span className="text-slate-300 text-lg">□</span>}
+                                      </button>
+                                    </React.Fragment>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : ansInput ? <MathText text={withCommas(ansInput)} /> : <span className="text-slate-300">?</span>}
                           </div>
                           {isAnsDisabled && (
                             <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }}
@@ -1504,14 +1548,14 @@ ${wrongSummary}
                                 const t = line.trim().replace(/^개념:\s*/, "");
                                 const isConcept = i === 0;
                                 const stepMatch = t.match(/^(\d)[.)]\s*(.*)/);
-                                if (isConcept) return <div key={i} className="font-black text-amber-800 text-sm pb-1 border-b border-amber-200/60">💡 {t}</div>;
+                                if (isConcept) return <div key={i} className="font-black text-amber-800 text-sm pb-1 border-b border-amber-200/60">💡 <MathText text={t} /></div>;
                                 if (stepMatch) return (
                                   <div key={i} className="flex items-start gap-2 text-amber-700 font-bold text-sm">
                                     <span className="shrink-0 w-5 h-5 rounded-full bg-amber-200 text-amber-800 text-[11px] font-black flex items-center justify-center mt-0.5">{stepMatch[1]}</span>
-                                    <span>{stepMatch[2]}</span>
+                                    <span><MathText text={stepMatch[2]} className="!justify-start" /></span>
                                   </div>
                                 );
-                                return <div key={i} className="text-amber-700 font-bold text-sm">{t}</div>;
+                                return <div key={i} className="text-amber-700 font-bold text-sm"><MathText text={t} /></div>;
                               })}
                               {hintUnitId && (
                                 <button onClick={() => setConceptUnit(hintUnitId)}
@@ -1551,7 +1595,7 @@ ${wrongSummary}
                         <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${specialKeys.length}, 1fr)` }}>
                           {specialKeys.map(k => (
                             <button key={k} {...tap(() => keypadPress(k === "…" ? " … " : k))}
-                              className="bg-amber-50 border-2 border-amber-200 rounded-xl py-2.5 text-xl font-black text-amber-700 select-none touch-manipulation active:bg-amber-100 transition-colors">{k === "…" ? <span className="text-base">나머지 <span className="text-xl">…</span></span> : k}</button>
+                              className="bg-amber-50 border-2 border-amber-200 rounded-xl py-2.5 text-xl font-black text-amber-700 select-none touch-manipulation active:bg-amber-100 transition-colors">{k === "…" ? <span className="text-base">나머지 <span className="text-xl">…</span></span> : k === "다음" ? <span className="text-base">다음 칸 →</span> : k}</button>
                           ))}
                         </div>
                       )}
@@ -1675,7 +1719,7 @@ ${wrongSummary}
                             className={`w-full p-3 rounded-xl border flex justify-between items-center transition-all active:scale-[0.98] ${answers[i]?.ok ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
                             <div className="flex items-center gap-3">
                               <span className="text-[10px] font-bold text-slate-400 w-4">{i + 1}</span>
-                              <span className="text-sm font-bold text-slate-700">{p.expr} = {withCommas(String(p.ans))}</span>
+                              <span className="text-sm font-bold text-slate-700"><MathText text={p.expr} /> {p.q ? '→' : '='} <MathText text={withCommas(String(p.ans))} /></span>
                             </div>
                             <div className="flex items-center gap-3">
                               <span className={`text-xs font-black ${answers[i]?.ok ? 'text-emerald-600' : 'text-rose-600'}`}>{answers[i]?.val || "-"}</span>

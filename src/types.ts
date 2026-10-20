@@ -8,6 +8,9 @@ export interface MathProblem {
   ans: string;
   unitName: string;
   unitId?: string;   // 개념노트·규칙 힌트 연결용 (예전 기록에는 없음)
+  fa?: string;       // 분수 문제의 두 수 (풀이 엔진용)
+  fb?: string;
+  q?: boolean;       // 식 뒤에 "="를 붙이지 않는 문제 (예: 12와 18의 최대공약수)
 }
 
 export interface LearningRecord {
