@@ -1,5 +1,5 @@
 /**
- * 개념노트 내용 (1단계: 1~3학년 22개 단원, 2단계: 4학년 5개, 5학년 6개 단원)
+ * 개념노트 내용 (1단계: 1~3학년 22개 단원, 2단계: 4학년 5개, 5학년 6개, 6학년 6개 단원)
  *
  * 구성: ① 개념 쏙(정의 + 예시 하나 + 그림 3칸) → ② 이렇게 풀어요(대표 풀이, strategies.ts가 계산)
  *       → ③ 조심해요 → ④ 개념 확인(대표 풀이로 빈칸 3문제)
@@ -24,6 +24,8 @@ export type Visual =
   | { kind: 'fracSplit'; d: number; wholes: Tone[]; pieces: Tone[] }
   /** 분수 곱셈 넓이 모형: rows×cols 칸, 앞 colsOn칸을 연하게, 그중 위 rowsOn줄을 진하게 */
   | { kind: 'fracArea'; rows: number; cols: number; colsOn: number; rowsOn?: number; stage?: 1 | 2 | 3 }
+  /** 분수 계산식 (분자·분모에 식이 들어갈 수 있음): ['2/3 × 3/4 = ', {n:'2 × 3', d:'3 × 4'}] */
+  | { kind: 'fracCalc'; items: (string | { w?: string; n: string; d: string })[] }
   /** 소수점 옮기기: 72 →(÷10) 7.2 →(÷10) 0.72 */
   | { kind: 'shiftSteps'; start: string; steps: { label: string; value: string }[] }
   /** 혼합 계산 식에 순서 번호·색 붙이기 */
@@ -62,6 +64,8 @@ const exf = (fa: string, op: string, fb: string, ans: string): Example => ({ a: 
 const exm = (e: string, ans: string): Example => ({ a: 0, b: 0, op: 'mix', ans, e });
 /** 최대공약수·최소공배수 예시 */
 const exq = (a: number, op: 'gcd' | 'lcm', b: number, ans: string): Example => ({ a, b, op, ans, e: `${a}${[1, 3, 6, 7, 8, 0].includes(a % 10) ? '과' : '와'} ${b}의 ${op === 'gcd' ? '최대공약수' : '최소공배수'}` });
+/** 식 그대로인 예시 (비율, 비례식) */
+const exe = (op: string, e: string, ans: string): Example => ({ a: 0, b: 0, op, ans, e });
 /** 약분 예시 */
 const exr = (fa: string, ans: string): Example => ({ a: 0, b: 0, op: 'reduce', ans, fa });
 
@@ -452,12 +456,12 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
   // ───────────── 5학년 2학기 ─────────────
   {
     unitId: '5-2-0', term: '분수의 곱셈',
-    def: '2/3 × 3/4은 **3/4의 2/3**만큼이에요. 3/4만큼을 먼저 칠하고, **칠한 부분 안에서만** 2/3를 골라요. 분수끼리 곱할 때는 **분자끼리, 분모끼리** 곱하고 약분해요. 대분수는 **가분수로 바꿔서** 곱해요.',
+    def: '분수끼리 곱할 때는 **분자는 분자끼리, 분모는 분모끼리** 곱하고, 마지막에 **약분**해요. 자연수는 분자에만 곱하고, 대분수는 **가분수로 바꿔서** 곱해요.',
     example: exf('2/3', '×', '3/4', '1/2'),
     panels: [
-      { title: '1. 3/4 칠하기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, stage: 1 }, caption: '세로로 4칸 중 3칸, 전체의 3/4' },
-      { title: '2. 칠한 부분의 2/3', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, rowsOn: 2, stage: 2 }, caption: '칠한 3/4 안에서만 3줄로 나눠 2줄 → 3/4의 2/3' },
-      { title: '3. 선을 이어 칸 세기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, rowsOn: 2, stage: 3 }, caption: '같은 크기 칸으로 4 × 3 = 12칸(분모끼리), 고른 칸 3 × 2 = 6칸(분자끼리) → 6/12 = 1/2' },
+      { title: '1. 분자끼리, 분모끼리', visual: { kind: 'fracCalc', items: ['2/3 × 3/4 = ', { n: '2 × 3', d: '3 × 4' }] }, caption: '위는 위끼리, 아래는 아래끼리 곱해요' },
+      { title: '2. 곱하기', visual: { kind: 'fracCalc', items: [{ n: '2 × 3', d: '3 × 4' }, ' = 6/12'] }, caption: '2 × 3 = 6, 3 × 4 = 12' },
+      { title: '3. 약분하기', visual: { kind: 'fracOp', from: [6, 12], op: '÷', k: 6, to: [1, 2] }, caption: '6 ÷ 6 = 1, 12 ÷ 6 = 2 → 1/2' },
     ],
     caution: { text: '대분수는 자연수 부분까지 함께 곱해야 해요. 가분수로 바꾸면 안전해요.', wrong: '1 1/2 × 1/3 = 1 1/6', wrongWhy: '자연수 1은 그대로 두고 분수끼리만 곱했어요', right: '1 1/2 × 1/3 = 3/2 × 1/3 = 1/2', rightWhy: '대분수를 가분수로 바꿔요' },
     checks: [exf('4/9', '×', '3', '1 1/3'), exf('3/5', '×', '5/6', '1/2'), exf('1 1/3', '×', '3/4', '1')],
@@ -473,6 +477,81 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
     ],
     caution: { text: '두 수의 소수 자리 수만큼 ÷10을 해야 해요.', wrong: '1.2 × 0.6 = 7.2', wrongWhy: '1.2 때문에 ÷10은 했지만, 0.6 때문에 한 번 더 하지 않았어요', right: '1.2 × 0.6 = 0.72', rightWhy: '72 ÷ 10 ÷ 10 = 0.72' },
     checks: [ex(2.3, '×', 4, '9.2'), ex(0.8, '×', 1.5, '1.2'), ex(3.25, '×', 6, '19.5')],
+  },
+
+  // ───────────── 6학년 1학기 ─────────────
+  {
+    unitId: '6-1-0', term: '(분수)÷(자연수)',
+    def: '분수를 자연수로 나눌 때 분자가 나누어떨어지면 **분모는 그대로, 분자만** 나눠요. 나누어떨어지지 않으면 **÷ 자연수를 × 1/자연수**로 바꿔 곱해요.',
+    example: exf('6/7', '÷', '3', '2/7'),
+    panels: [
+      { title: '1. 6/7 보기', visual: { kind: 'fracBar', items: [{ w: 0, n: 6, d: 7, tone: 'a' }] }, caption: '6/7은 1/7이 6조각' },
+      { title: '2. 분자만 나누기', visual: { kind: 'fracCalc', items: ['6/7 ÷ 3 = ', { n: '6 ÷ 3', d: '7' }] }, caption: '6조각을 3묶음으로 나누면 한 묶음에 2조각' },
+      { title: '3. 한 묶음', visual: { kind: 'fracBar', items: [{ w: 0, n: 2, d: 7, tone: 'a' }] }, caption: '1/7이 2조각 → 2/7' },
+    ],
+    caution: { text: '나눗셈이니 분자를 곱하면 안 돼요.', wrong: '6/7 ÷ 3 = 18/7', wrongWhy: '분자에 3을 곱했어요', right: '6/7 ÷ 3 = 2/7', rightWhy: '6 ÷ 3 = 2, 분모는 그대로' },
+    checks: [exf('8/9', '÷', '4', '2/9'), exf('10/11', '÷', '5', '2/11'), exf('1 1/5', '÷', '3', '2/5')],
+  },
+  {
+    unitId: '6-1-1', term: '(소수)÷(자연수)',
+    def: '소수점을 떼고 **자연수처럼 나눈** 다음, 소수 자리 수만큼 **÷10**을 해요. 5학년 소수의 곱셈과 같은 방법이에요. 나누어떨어지지 않으면 **끝에 0을 붙여** 계속 나눠요.',
+    example: ex(9.6, '÷', 4, '2.4'),
+    panels: [
+      { title: '1. 자연수 ÷ 10으로 보기', visual: { kind: 'expr', text: '9.6 = 96 ÷ 10' }, caption: '소수 한 자리 수는 자연수를 10으로 나눈 수' },
+      { title: '2. 자연수처럼 나누기', visual: { kind: 'expr', text: '96 ÷ 4 = 24' }, caption: '소수점을 떼고 나눠요' },
+      { title: '3. ÷10 하기', visual: { kind: 'shiftSteps', start: '24', steps: [{ label: '9.6 때문에 ÷10', value: '2.4' }] }, caption: '÷10 한 번 → 소수점이 한 칸 왼쪽' },
+    ],
+    caution: { text: '자연수처럼 나눈 다음 소수점을 꼭 옮겨야 해요.', wrong: '9.6 ÷ 4 = 24', wrongWhy: '96 ÷ 4만 하고 ÷10을 하지 않았어요', right: '9.6 ÷ 4 = 2.4', rightWhy: '24 ÷ 10 = 2.4' },
+    checks: [ex(8.4, '÷', 3, '2.8'), ex(6.36, '÷', 3, '2.12'), ex(4.5, '÷', 6, '0.75')],
+  },
+  {
+    unitId: '5-2-2', term: '비율',
+    def: '**비율 = 비교하는 양 ÷ 기준량**이에요. 3 : 5에서 기준량은 **뒤의 수 5**, 비교하는 양은 앞의 수 3이라서 비율은 3/5이에요. 분모를 100으로 바꾸면 **백분율(%)**이 돼요.',
+    example: exe('rate', '3 : 5의 비율을 백분율로', '60%'),
+    panels: [
+      { title: '1. 앞 ÷ 뒤', visual: { kind: 'expr', text: '3 : 5 → 3/5' }, caption: '비교하는 양 3 ÷ 기준량 5' },
+      { title: '2. 분모를 100으로', visual: { kind: 'fracOp', from: [3, 5], op: '×', k: 20, to: [60, 100] }, caption: '3 × 20 = 60, 5 × 20 = 100 → 60/100' },
+      { title: '3. 백분율로', visual: { kind: 'expr', text: '60/100 = 60%' }, caption: '100분의 60 = 60%' },
+    ],
+    caution: { text: '기준량(뒤의 수)이 분모예요.', wrong: '3 : 5의 비율 = 5/3', wrongWhy: '기준량 5를 분자에 썼어요', right: '3 : 5의 비율 = 3/5', rightWhy: '앞 ÷ 뒤 = 비교하는 양 ÷ 기준량' },
+    checks: [exe('rate', '1 : 4의 비율을 소수로', '0.25'), exe('rate', '9 : 12의 비율을 분수로', '3/4'), exe('rate', '7 : 20의 비율을 백분율로', '35%')],
+  },
+  // ───────────── 6학년 2학기 ─────────────
+  {
+    unitId: '6-2-1', term: '(분수)÷(분수)',
+    def: '분수를 분수로 나누는 건 **나누는 분수가 몇 번 들어가는지** 구하는 거예요. **분모를 같게** 하면 조각 크기가 같아지니까 **분자끼리 나누면** 돼요.',
+    example: exf('3/4', '÷', '3/8', '2'),
+    panels: [
+      { title: '1. 몇 번 들어갈까?', visual: { kind: 'fracBar', items: [{ w: 0, n: 3, d: 4, tone: 'a' }, { w: 0, n: 3, d: 8, tone: 'b' }] }, caption: '3/4 안에 3/8이 몇 번 들어갈까?' },
+      { title: '2. 조각 크기를 같게', visual: { kind: 'fracBar', items: [{ w: 0, n: 6, d: 8, tone: 'a' }, { w: 0, n: 3, d: 8, tone: 'b' }] }, caption: '8조각으로 같게: 3/4 = 6/8' },
+      { title: '3. 분자끼리 나누기', visual: { kind: 'expr', text: '6 ÷ 3 = 2' }, caption: '6조각 안에 3조각이 2번 → 2' },
+    ],
+    caution: { text: '나눗셈을 곱셈처럼 분자끼리, 분모끼리 곱하면 안 돼요.', wrong: '3/4 ÷ 3/8 = 9/32', wrongWhy: '분자끼리, 분모끼리 곱했어요', right: '3/4 ÷ 3/8 = 6/8 ÷ 3/8 = 2', rightWhy: '분모를 같게 하고 6 ÷ 3' },
+    checks: [exf('4/5', '÷', '2/5', '2'), exf('5/6', '÷', '1/3', '2 1/2'), exf('1 1/2', '÷', '3/4', '2')],
+  },
+  {
+    unitId: '6-2-2', term: '(소수)÷(소수)',
+    def: '나누는 수와 나누어지는 수에 **똑같이 10배, 100배**를 해도 몫은 같아요 (6 ÷ 2 = 60 ÷ 20 = 3). 나누는 수가 **자연수가 되게** 바꿔서 나눠요.',
+    example: ex(3.6, '÷', 0.4, '9'),
+    panels: [
+      { title: '1. 몇 번 들어갈까?', visual: { kind: 'expr', text: '3.6 ÷ 0.4' }, caption: '0.4가 3.6 안에 몇 번 들어갈까?' },
+      { title: '2. 똑같이 ×10', visual: { kind: 'expr', text: '36 ÷ 4' }, caption: '3.6 × 10 = 36, 0.4 × 10 = 4 (몫은 그대로)' },
+      { title: '3. 자연수로 나누기', visual: { kind: 'expr', text: '36 ÷ 4 = 9' }, caption: '그래서 3.6 ÷ 0.4 = 9' },
+    ],
+    caution: { text: '두 수에 똑같이 곱해야 몫이 그대로예요.', wrong: '3.6 ÷ 0.4 = 0.9', wrongWhy: '0.4에만 ×10 해서 3.6 ÷ 4로 계산했어요', right: '3.6 ÷ 0.4 = 36 ÷ 4 = 9', rightWhy: '두 수 모두 ×10' },
+    checks: [ex(8.4, '÷', 1.2, '7'), ex(1.44, '÷', 0.12, '12'), ex(4.5, '÷', 0.9, '5')],
+  },
+  {
+    unitId: '6-2-0', term: '비례식',
+    def: '비의 앞과 뒤에 **같은 수를 곱하거나 나눠도** 비율은 같아요. 그래서 3 : 4 = □ : 20에서 4가 20이 되려면 ×5이니, **□도 3 × 5**예요.',
+    example: exe('prop', '3 : 4 = □ : 20', '15'),
+    panels: [
+      { title: '1. □ 찾기', visual: { kind: 'expr', text: '3 : 4 = □ : 20' }, caption: '□가 없는 쪽(4와 20)을 먼저 봐요' },
+      { title: '2. 몇 배일까?', visual: { kind: 'expr', text: '4 × 5 = 20' }, caption: '4가 20이 되려면 × 5' },
+      { title: '3. 똑같이 곱하기', visual: { kind: 'expr', text: '3 × 5 = 15' }, caption: '앞의 수도 × 5 → □ = 15' },
+    ],
+    caution: { text: '비는 더하거나 빼서 맞추지 않고, 곱하거나 나눠서 맞춰요.', wrong: '3 : 4 = 19 : 20', wrongWhy: '4에 16을 더해 20을 만들고, 3에도 16을 더했어요', right: '3 : 4 = 15 : 20', rightWhy: '앞과 뒤 모두 × 5' },
+    checks: [exe('prop', '2 : 5 = □ : 30', '12'), exe('prop', '□ : 24 = 3 : 8', '9'), exe('prop', '6 : 7 = 18 : □', '21')],
   },
 ];
 

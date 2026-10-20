@@ -4,7 +4,7 @@
  * - 개념 확인은 자체 숫자 키패드 (태블릿 키보드가 화면을 가리지 않게)
  */
 import React, { useMemo, useState } from 'react';
-import { ArrowRight, CheckCircle2, ChevronLeft, Delete, Lock } from 'lucide-react';
+import { ArrowRight, CheckCircle2, ChevronLeft, Delete } from 'lucide-react';
 import { UNITS } from './constants';
 import { CONCEPT_NOTES, NOTE_BY_UNIT, Panel, Visual, Tone } from './conceptNotes';
 import { STRATEGIES, Strategy, Line, P, Seg, lineText, mainStrategyFor, planFor, columnData, mulColData, mixMarks, j } from './strategies';
@@ -104,6 +104,15 @@ function VisualView({ v }: { v: Visual }) {
             );
           })}
         </div>
+      </div>
+    );
+  }
+  if (v.kind === 'fracCalc') {
+    return (
+      <div className="flex items-center justify-center min-h-[110px] text-2xl md:text-3xl font-black text-slate-800 whitespace-nowrap">
+        {v.items.map((it, i) => typeof it === 'string'
+          ? <React.Fragment key={i}><MathText text={it} className="whitespace-pre" nowrap /></React.Fragment>
+          : <React.Fragment key={i}><Frac w={it.w} n={it.n} d={it.d} /></React.Fragment>)}
       </div>
     );
   }
@@ -569,7 +578,7 @@ export function ConceptNote({ unitId, done, onClose, onPractice, onDone }: {
           <p className="mt-2 text-lg md:text-xl leading-relaxed font-medium text-slate-800"><Rich text={note.def} /></p>
           {note.strip === 'mix' && <div className="mt-3"><MixOrderStrip /></div>}
         </div>
-        <div className="text-lg font-black text-slate-900 flex items-center flex-wrap"><MathText text={exText} /><span>{exJosa} 알아볼까요?</span></div>
+        <div className="text-lg font-black text-slate-900 flex items-center flex-wrap"><MathText text={exText} />{/로$/.test(exText) ? <span className="ml-1.5">나타내 볼까요?</span> : <span>{exJosa} 알아볼까요?</span>}</div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {note.panels.map((pn: Panel, i) => (
             <div key={i} className={`rounded-2xl p-4 flex flex-col items-center gap-3 ${['bg-slate-50', 'bg-amber-50', 'bg-emerald-50'][i]}`}>
@@ -682,10 +691,9 @@ export function ConceptNoteList({ myUnitIds, doneMap, onOpen, onBack }: {
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <h2 className="text-base font-black text-slate-900">다른 단원 미리보기</h2>
           <div className="flex gap-1.5 flex-wrap">
-            {[1, 2, 3, 4, 5].map(g => (
+            {[1, 2, 3, 4, 5, 6].map(g => (
               <button key={g} onClick={() => setGrade(g)} className={`px-4 py-2 rounded-full text-sm font-bold ${grade === g ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>{g}학년</button>
             ))}
-            <span className="px-4 py-2 rounded-full text-sm font-bold border border-dashed border-slate-300 text-slate-400 flex items-center gap-1"><Lock size={12} />6학년 준비 중</span>
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">{list.map(u => <React.Fragment key={u.id}><Card u={u} /></React.Fragment>)}</div>

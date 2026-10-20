@@ -1246,11 +1246,337 @@ const decMulFrac: Strategy = {
   hint: p => { const d = decMulOf(p); return [`${p.a} = ${d.da ? `${d.A}/${10 ** d.da}` : d.A}${d.db ? `, ${p.b} = ${d.B}/${10 ** d.db}` : ''}로 바꿔서 곱해 봐`, `분모가 ${10 ** d.dp}이면 소수 ${d.dp}자리야. 답은 얼마일까?`]; },
 };
 
+// ─────────────────────────────────────────────
+// 6학년: (분수)÷(자연수), (자연수)÷(자연수)
+// ─────────────────────────────────────────────
+const isFracDiv = (p: P) => isDiv(p) && !!p.fa && !!p.fb;
+const fracText = (n: number, d: number) => (d === 1 ? String(n) : `${n}/${d}`);
+/** 가분수로 바꾸는 줄 (대분수가 있을 때만) */
+function improperLine(p: P, sym: string): Line | null {
+  const A = mx(p.fa), B = mx(p.fb);
+  if (!((A.w && A.d) || (B.w && B.d))) return null;
+  return { segs: [fs(impText(A), A.w && A.d ? 'O' : undefined), s(` ${sym} `), fs(impText(B), B.w && B.d ? 'O' : undefined)], note: '대분수를 가분수로 바꿔요' };
+}
+const natDivFrac: Strategy = {
+  id: 'natDivFrac', name: '몫을 분수로', sub: '1을 똑같이 나누기', when: '나누어떨어지지 않는 자연수의 나눗셈이에요',
+  applies: p => isFracDiv(p) && !mx(p.fa).d && !mx(p.fb).d,
+  lines: p => {
+    const a = mx(p.fa).w, b = mx(p.fb).w;
+    const out: Line[] = [
+      { segs: [s(`${a} ÷ ${b}`)], note: `1을 ${b}로 나누면 1/${b}` },
+      { segs: [s(`1/${b}이 `), s(a, 'O', true), s('개')], note: `${j.을(a)} ${b}로 나누면 1/${b}이 ${a}개` },
+      { segs: [fs(`${a}/${b}`, 'B', true)], note: '나누어지는 수가 분자, 나누는 수가 분모' },
+    ];
+    return mulTail(out, a, b);
+  },
+  intro: p => `${p.fa} ÷ ${p.fb}의 몫을 분수로 나타내 보자!`,
+};
+const fracDivNum: Strategy = {
+  id: 'fracDivNum', name: '분자를 나누기', sub: '조각을 똑같이 나누기', when: '분자가 나누는 수로 나누어떨어질 때 좋아요',
+  applies: p => isFracDiv(p) && !!mx(p.fa).d && !mx(p.fb).d && imp(mx(p.fa)).n % mx(p.fb).w === 0,
+  lines: p => {
+    const a = imp(mx(p.fa)), k = mx(p.fb).w;
+    const out: Line[] = [{ segs: [s(`${p.fa} ÷ ${k}`)], note: `1/${a.d}이 ${a.n}개를 ${k}묶음으로 나눠요` }];
+    const il = improperLine(p, '÷'); if (il) out.push(il);
+    out.push({ segs: [fe(`${a.n} ÷ ${k}`, `${a.d}`, 'O')], note: '분모는 그대로, 분자만 나눠요' });
+    out.push({ segs: [fs(fracText(a.n / k, a.d), 'B', true)], note: `${a.n} ÷ ${k} = ${a.n / k}` });
+    return mulTail(out, a.n / k, a.d);
+  },
+  intro: p => `분자를 ${j.으로(mx(p.fb).w)} 나눠 보자!`,
+  hint: p => { const a = imp(mx(p.fa)), k = mx(p.fb).w; return [`분모 ${a.d}는 그대로 두고, 분자 ${j.을(a.n)} ${j.으로(k)} 나눠 봐`, `몫은 얼마일까?`]; },
+};
+const fracDivRecip: Strategy = {
+  id: 'fracDivRecip', name: '× 1/자연수', sub: '나누기를 곱하기로', when: '분자가 나누어떨어지지 않아도 쓸 수 있어요',
+  applies: p => isFracDiv(p) && !!mx(p.fa).d && !mx(p.fb).d,
+  lines: p => {
+    const a = imp(mx(p.fa)), k = mx(p.fb).w;
+    const out: Line[] = [{ segs: [s(`${p.fa} ÷ ${k}`)], note: `÷ ${j.은(k)} × 1/${k}과 같아요` }];
+    const il = improperLine(p, '÷'); if (il) out.push(il);
+    out.push({ segs: [fs(fracText(a.n, a.d)), s(' × '), fs(`1/${k}`, 'O')], note: `÷ ${k} → × 1/${k}` });
+    out.push({ segs: [fe(`${a.n} × 1`, `${a.d} × ${k}`, 'O')], note: '분자끼리, 분모끼리 곱해요' });
+    out.push({ segs: [fs(`${a.n}/${a.d * k}`, 'B', true)], note: `${a.d} × ${k} = ${a.d * k}` });
+    return mulTail(out, a.n, a.d * k);
+  },
+  intro: p => `÷ ${j.을(mx(p.fb).w)} × 1/${mx(p.fb).w}로 바꿔 보자!`,
+  hint: p => { const k = mx(p.fb).w; return [`÷ ${j.은(k)} × 1/${k}과 같아. 분모에 ${j.을(k)} 곱해 봐`, `약분까지 하면 얼마일까?`]; },
+};
+
+// ─────────────────────────────────────────────
+// 6학년: (소수)÷(자연수)
+// ─────────────────────────────────────────────
+const isDecDivNat = (p: P) => isDiv(p) && !p.fa && Number.isInteger(p.b) && (!Number.isInteger(p.a) || String(p.ans ?? '').includes('.'));
+function decDivOf(p: P) {
+  const dq = Math.max(decPlaces(String(p.ans ?? '')), decPlaces(String(p.a)), 1);
+  const A = toScaled(String(p.a), dq);
+  return { dq, A, Q: A / p.b, pa: padDec(p.a, dq) };
+}
+const decDivShift: Strategy = {
+  id: 'decDivShift', name: '나누고 ÷10 하기', sub: '자연수처럼 나누기', when: '5학년 소수의 곱셈처럼 소수점을 옮겨요',
+  applies: p => isDecDivNat(p) && Number.isInteger(decDivOf(p).Q),
+  lines: p => {
+    const d = decDivOf(p);
+    const out: Line[] = [{ segs: [s(`${p.a} ÷ ${p.b}`)], note: decPlaces(String(p.a)) ? `${j.은(p.a)} ${j.을(toScaled(String(p.a), decPlaces(String(p.a))))} ${10 ** decPlaces(String(p.a))}으로 나눈 수예요` : '나누어떨어지지 않으면 소수점 아래로 계속 나눠요' }];
+    if (decPlaces(String(p.a)) < d.dq) out.push({ segs: [s(d.pa, 'O'), s(` ÷ ${p.b}`)], note: `${p.a} = ${d.pa}. 끝에 0을 붙여 계속 나눌 수 있게 해요` });
+    out.push({ segs: [s(`${d.A} ÷ ${p.b} = `), s(d.Q, 'O', true)], note: '소수점을 떼고 자연수처럼 나눠요', noEq: true });
+    for (let k = 1; k < d.dq; k++) out.push({ segs: [s(`${decText(d.Q, k - 1)} ÷ 10 = `), s(decText(d.Q, k), 'O', true)], note: '÷10: 소수점이 한 칸 왼쪽으로', noEq: true });
+    out.push({ segs: [s(decText(d.Q, d.dq), 'B', true)], note: `÷10을 ${d.dq}번 = 소수점이 ${d.dq}칸 왼쪽으로` });
+    return out;
+  },
+  intro: () => '소수점을 떼고 자연수처럼 나눈 다음, ÷10으로 소수점을 옮겨 보자!',
+  hint: p => { const d = decDivOf(p); return [`소수점을 떼고 ${d.A} ÷ ${p.b}부터 계산해 봐`, `그다음 소수점을 왼쪽으로 ${d.dq}칸 옮기면 얼마일까?`]; },
+};
+const decDivFrac: Strategy = {
+  id: 'decDivFrac', name: '분수로 바꿔 나누기', sub: '10분의, 100분의', when: '(분수)÷(자연수)와 같은 방법이에요',
+  applies: p => isDecDivNat(p) && Number.isInteger(decDivOf(p).Q),
+  lines: p => {
+    const d = decDivOf(p), D = 10 ** d.dq;
+    return [
+      { segs: [s(`${p.a} ÷ ${p.b}`)], note: '소수를 분수로 바꿔요' },
+      { segs: [fs(`${d.A}/${D}`, 'O'), s(` ÷ ${p.b}`)], note: `${p.a} = ${d.A}/${D}` },
+      { segs: [fe(`${d.A} ÷ ${p.b}`, String(D), 'O')], note: '분자만 나눠요' },
+      { segs: [fs(`${d.Q}/${D}`, 'B', true)], note: `${d.A} ÷ ${p.b} = ${d.Q}` },
+      { segs: [s(decText(d.Q, d.dq), 'B', true)], note: '분수를 소수로 바꿔요' },
+    ];
+  },
+  intro: () => '소수를 분수로 바꿔서 나눠 보자!',
+};
+
+// ─────────────────────────────────────────────
+// 6학년: 비와 비율
+// ─────────────────────────────────────────────
+function rateOf(p: P) {
+  const m = String(p.e || '').match(/^(\d+) : (\d+)의 비율을 (분수|소수|백분율)로/);
+  if (!m) return null;
+  return { a: Number(m[1]), b: Number(m[2]), kind: m[3] as '분수' | '소수' | '백분율' };
+}
+const rateStep: Strategy = {
+  id: 'rateStep', name: '비율 = 앞 ÷ 뒤', sub: '분수로 쓰고 바꾸기', when: '비교하는 양을 기준량으로 나눠요',
+  applies: p => p.op === 'rate' && !!rateOf(p),
+  lines: p => {
+    const r = rateOf(p)!;
+    const g = gcd(r.a, r.b), n = r.a / g, d = r.b / g;
+    const out: Line[] = [
+      { segs: [s(`${r.a} : ${r.b}의 비율`)], note: `기준량은 뒤의 수 ${r.b}, 비교하는 양은 앞의 수 ${r.a}` },
+      { segs: [fs(`${r.a}/${r.b}`, 'O', r.kind === '분수' && g === 1)], note: '비율 = 비교하는 양 ÷ 기준량 (앞 ÷ 뒤)' },
+    ];
+    if (g > 1) out.push({ segs: [r.kind === '분수' ? fsD(fracText(n, d), 'B') : fs(fracText(n, d), 'O')], note: `${j.과(r.a)} ${j.을(r.b)} ${j.으로(g)} 약분해요` });
+    if (r.kind === '분수') {
+      if (g === 1) out[out.length - 1] = { ...out[out.length - 1], segs: [fs(`${r.a}/${r.b}`, 'B', true)] };
+      return out;
+    }
+    // 분모를 10, 100, 1000으로 (백분율은 100)
+    let k = r.kind === '백분율' ? 2 : 1;
+    while (10 ** k % d !== 0) k++;
+    const D = 10 ** k, N = n * (D / d);
+    if (D !== d) out.push({ segs: [fs(`${N}/${D}`, 'B', true)], note: `분모를 ${j.으로(D)}: 분모와 분자에 × ${D / d}` });
+    if (r.kind === '소수') out.push({ segs: [s(decText(N, k), 'B', true)], note: `${j.은(`${N}/${D}`)} 소수 ${['', '한', '두', '세', '네'][k]} 자리로 ${decText(N, k)}` });
+    else out.push({ segs: [s(N, 'B', true), s('%')], note: `${N}/100은 ${N}% (100분의 몇 = 몇 %)` });
+    return out;
+  },
+  intro: () => '비율은 비교하는 양 ÷ 기준량이야. 분수로 먼저 써 보자!',
+  hint: p => { const r = rateOf(p)!; return [`${r.a} : ${r.b}의 비율은 ${r.a}/${r.b} (앞 ÷ 뒤)`, r.kind === '분수' ? '약분까지 하면?' : r.kind === '소수' ? '분모를 10, 100으로 바꾸면 소수로 쓸 수 있어. 얼마일까?' : '분모를 100으로 바꾸면 분자가 %야. 얼마일까?']; },
+};
+
+// ─────────────────────────────────────────────
+// 6학년: (분수)÷(분수)
+// ─────────────────────────────────────────────
+const isFracFracDiv = (p: P) => isFracDiv(p) && !!mx(p.fb).d;
+const fracDivCommon: Strategy = {
+  id: 'fracDivCommon', name: '분모를 같게 해서 나누기', sub: '분자끼리 나누기', when: '조각 크기를 같게 하면 분자끼리 나누면 돼요',
+  applies: isFracFracDiv,
+  lines: p => {
+    const A = imp(mx(p.fa)), B = imp(mx(p.fb));
+    const out: Line[] = [{ segs: [s(`${p.fa} ÷ ${p.fb}`)], note: `${p.fa} 안에 ${j.이(p.fb!)} 몇 번 들어가는지 구해요` }];
+    const il = improperLine(p, '÷'); if (il) out.push(il);
+    const L = lcm(A.d, B.d), na = A.n * (L / A.d), nb = B.n * (L / B.d);
+    if (A.d !== B.d) out.push({ segs: [fs(fracText(na, L), 'B', true), s(' ÷ '), fs(fracText(nb, L), 'B', true)], note: `분모를 ${j.으로(L)} 같게 해요 (통분)` });
+    out.push({ segs: [s(`${na} ÷ ${nb}`, 'O')], note: `1/${L}이 ${na}개 안에 ${nb}개씩 → 분자끼리 나눠요` });
+    if (na % nb === 0) { out.push({ segs: [s(na / nb, 'B', true)], note: `${na} ÷ ${nb} = ${na / nb}` }); return out; }
+    out.push({ segs: [fs(`${na}/${nb}`, 'B', true)], note: '나누어떨어지지 않으면 몫을 분수로' });
+    return mulTail(out, na, nb);
+  },
+  intro: () => '분모를 같게 한 다음, 분자끼리 나눠 보자!',
+  hint: p => { const A = imp(mx(p.fa)), B = imp(mx(p.fb)), L = lcm(A.d, B.d); return [A.d === B.d ? `분모가 같으니 분자끼리 ${A.n} ÷ ${B.n}을 해 봐` : `분모를 ${j.으로(L)} 같게 하면 ${fracText(A.n * L / A.d, L)} ÷ ${fracText(B.n * L / B.d, L)}`, '분자끼리 나누면 얼마일까?']; },
+};
+const fracDivFlip: Strategy = {
+  id: 'fracDivFlip', name: '뒤집어 곱하기', sub: '÷ 분수 → × 거꾸로', when: '학교에서 마지막에 배우는 빠른 방법이에요',
+  applies: isFracFracDiv,
+  lines: p => {
+    const A = imp(mx(p.fa)), B = imp(mx(p.fb));
+    const out: Line[] = [{ segs: [s(`${p.fa} ÷ ${p.fb}`)], note: '나누는 분수의 분모와 분자를 바꿔 곱해요' }];
+    const il = improperLine(p, '÷'); if (il) out.push(il);
+    out.push({ segs: [fs(fracText(A.n, A.d)), s(' × '), fs(fracText(B.d, B.n), 'O')], note: `÷ ${fracText(B.n, B.d)} → × ${fracText(B.d, B.n)}` });
+    out.push({ segs: [fe(`${A.n} × ${B.d}`, `${A.d} × ${B.n}`, 'O')], note: '분자끼리, 분모끼리 곱해요' });
+    const N = A.n * B.d, D = A.d * B.n;
+    out.push({ segs: [D === 1 ? s(N, 'B', true) : fs(`${N}/${D}`, 'B', true)], note: `${A.n} × ${B.d} = ${N}, ${A.d} × ${B.n} = ${D}` });
+    return mulTail(out, N, D);
+  },
+  intro: () => '나누는 분수를 뒤집어서 곱해 보자!',
+};
+
+// ─────────────────────────────────────────────
+// 6학년: (소수)÷(소수)
+// ─────────────────────────────────────────────
+const isDecDivDec = (p: P) => isDiv(p) && !p.fa && !Number.isInteger(p.b);
+const decDivScale: Strategy = {
+  id: 'decDivScale', name: '똑같이 10배 하기', sub: '나누는 수를 자연수로', when: '두 수를 똑같이 10배, 100배 해도 몫은 같아요',
+  applies: isDecDivDec,
+  lines: p => {
+    const k = decPlaces(String(p.b)), F = 10 ** k, da = decPlaces(String(p.a)), m = Math.max(k, da);
+    const At = decText(toScaled(String(p.a), m), m - k);   // 나누어지는 수 × F
+    const B = toScaled(String(p.b), k);
+    const A = Number(At);
+    const out: Line[] = [
+      { segs: [s(`${p.a} ÷ ${p.b}`)], note: `나누는 수 ${j.이(p.b)} 자연수가 되게 해요` },
+      { segs: [s(At, 'O'), s(' ÷ '), s(B, 'O')], note: `두 수에 똑같이 × ${F} (몫은 그대로)` },
+    ];
+    out.push({ segs: [s(String(p.ans), 'B', true)], note: Number.isInteger(A) ? `${At} ÷ ${B} = ${p.ans}` : `(소수)÷(자연수)로 계산해요: ${At} ÷ ${B} = ${p.ans}` });
+    return out;
+  },
+  intro: p => `두 수에 똑같이 × ${10 ** decPlaces(String(p.b))}을 해서 나누는 수를 자연수로 만들어 보자!`,
+  hint: p => { const k = decPlaces(String(p.b)); return [`${p.a}와 ${p.b}에 똑같이 × ${10 ** k}을 해 봐. 몫은 그대로야`, '자연수로 나누면 얼마일까?']; },
+};
+const decDivFrac2: Strategy = {
+  id: 'decDivFrac2', name: '분수로 바꿔 나누기', sub: '분모가 같은 분수의 나눗셈', when: '(분수)÷(분수)에서 분자끼리 나누는 것과 같아요',
+  applies: p => isDecDivDec(p) && Number.isInteger(toScaled(String(p.a), Math.max(decPlaces(String(p.a)), decPlaces(String(p.b)))) / toScaled(String(p.b), Math.max(decPlaces(String(p.a)), decPlaces(String(p.b))))),
+  lines: p => {
+    const k = Math.max(decPlaces(String(p.a)), decPlaces(String(p.b))), D = 10 ** k;
+    const A = toScaled(String(p.a), k), B = toScaled(String(p.b), k);
+    return [
+      { segs: [s(`${p.a} ÷ ${p.b}`)], note: '소수를 분모가 같은 분수로 바꿔요' },
+      { segs: [fs(`${A}/${D}`, 'O'), s(' ÷ '), fs(`${B}/${D}`, 'O')], note: `${p.a} = ${A}/${D}, ${p.b} = ${B}/${D}` },
+      { segs: [s(`${A} ÷ ${B}`)], note: '분모가 같으면 분자끼리 나눠요' },
+      { segs: [s(A / B, 'B', true)], note: `${A} ÷ ${B} = ${A / B}` },
+    ];
+  },
+  intro: () => '소수를 분모가 같은 분수로 바꿔서 나눠 보자!',
+};
+
+// ─────────────────────────────────────────────
+// 6학년: 비 간단히 · 비례식 · 비례배분
+// ─────────────────────────────────────────────
+function ratioOf(p: P) {
+  const m = String(p.e || '').match(/^([\d./]+) : ([\d./]+)\S* 간단한/);
+  return m ? { x: m[1], y: m[2] } : null;
+}
+const ratioSimplify: Strategy = {
+  id: 'ratioSimplify', name: '같은 수로 곱하고 나누기', sub: '비의 성질', when: '앞과 뒤에 같은 수를 곱하거나 나눠도 비는 같아요',
+  applies: p => p.op === ':' && !!ratioOf(p),
+  lines: p => {
+    const r = ratioOf(p)!;
+    const out: Line[] = [{ segs: [s(`${r.x} : ${r.y}`)], note: '간단한 자연수의 비로 나타내요' }];
+    let x: number, y: number;
+    if (r.x.includes('/')) {
+      const fx = mx(r.x), fy = mx(r.y), L = fx.d * fy.d;
+      x = fx.n * fy.d; y = fy.n * fx.d;
+      out.push({ segs: [s(`${r.x} × ${L} : ${r.y} × ${L}`, 'O')], note: `두 분모의 곱 ${j.을(L)} 앞과 뒤에 똑같이 곱해요` });
+      out.push({ segs: [s(x, 'B'), s(' : '), s(y, 'B')], note: '분수가 자연수가 됐어요' });
+    } else if (r.x.includes('.') || r.y.includes('.')) {
+      const k = Math.max(decPlaces(r.x), decPlaces(r.y)), F = 10 ** k;
+      x = toScaled(r.x, k); y = toScaled(r.y, k);
+      out.push({ segs: [s(`${r.x} × ${F} : ${r.y} × ${F}`, 'O')], note: `앞과 뒤에 똑같이 × ${F}` });
+      out.push({ segs: [s(x, 'B'), s(' : '), s(y, 'B')], note: '소수가 자연수가 됐어요' });
+    } else { x = Number(r.x); y = Number(r.y); }
+    const g = gcd(x, y);
+    if (g === 1 && out.length > 1) { out.pop(); }   // 바꾼 비가 이미 가장 간단하면 마지막 줄과 겹치므로 뺌
+    if (g > 1) out.push({ segs: [s(`${x} ÷ ${g} : ${y} ÷ ${g}`, 'O')], note: `앞과 뒤를 최대공약수 ${j.으로(g)} 똑같이 나눠요` });
+    out.push({ segs: [s(x / g, 'B', true), s(' : '), s(y / g, 'B', true)], note: '더 나눌 수 없으면 가장 간단한 자연수의 비예요' });
+    return out;
+  },
+  intro: () => '앞과 뒤에 같은 수를 곱하거나 나눠 보자!',
+};
+function propOf(p: P) {
+  const m = String(p.e || '').match(/^(\S+) : (\S+) = (\S+) : (\S+)$/);
+  if (!m) return null;
+  const t = [m[1], m[2], m[3], m[4]];
+  const q = t.indexOf('□');
+  if (q < 0) return null;
+  const left = q >= 2 ? [0, 1] : [2, 3], right = q >= 2 ? [2, 3] : [0, 1];   // right에 □
+  const qi = right.indexOf(q), other = 1 - qi;
+  const kNum = Number(t[right[other]]), kDen = Number(t[left[other]]);
+  return { t, q, base: Number(t[left[qi]]), from: kDen, to: kNum, mul: kNum >= kDen ? kNum / kDen : 0, div: kNum < kDen ? kDen / kNum : 0 };
+}
+const propRule: Strategy = {
+  id: 'propRule', name: '똑같이 곱하기', sub: '비의 성질', when: '한쪽이 몇 배가 됐는지 보면 □가 보여요',
+  applies: p => p.op === 'prop' && !!propOf(p),
+  lines: p => {
+    const r = propOf(p)!;
+    const ans = Number(p.ans);
+    if (r.mul) return [
+      { segs: [s(p.e!)], note: '□가 없는 쪽에서 몇 배가 됐는지 찾아요' },
+      { segs: [s(`${r.from} × `), s(r.mul, 'O', true), s(` = ${r.to}`)], note: `${j.이(r.from)} ${j.이(r.to)} 되려면 × ${r.mul}`, noEq: true },
+      { segs: [s(`${r.base} × ${r.mul} = `), s(ans, 'B', true)], note: '다른 쪽도 똑같이 곱해요', noEq: true },
+      { segs: [s(ans, 'B', true)], note: `□ = ${ans}` },
+    ];
+    return [
+      { segs: [s(p.e!)], note: '□가 없는 쪽에서 몇으로 나눠졌는지 찾아요' },
+      { segs: [s(`${r.from} ÷ `), s(r.div, 'O', true), s(` = ${r.to}`)], note: `${j.이(r.from)} ${j.이(r.to)} 되려면 ÷ ${r.div}`, noEq: true },
+      { segs: [s(`${r.base} ÷ ${r.div} = `), s(ans, 'B', true)], note: '다른 쪽도 똑같이 나눠요', noEq: true },
+      { segs: [s(ans, 'B', true)], note: `□ = ${ans}` },
+    ];
+  },
+  intro: () => '□가 없는 쪽에서 몇 배가 됐는지 찾아보자!',
+  hint: p => { const r = propOf(p)!; return [r.mul ? `${r.from} × □ = ${r.to}에서 몇 배인지 찾아봐` : `${r.from} ÷ □ = ${r.to}에서 몇으로 나눴는지 찾아봐`, '다른 쪽에도 똑같이 하면 □는 얼마일까?']; },
+};
+const propCross: Strategy = {
+  id: 'propCross', name: '외항의 곱 = 내항의 곱', sub: '바깥끼리, 안끼리 곱하기', when: '학교에서 배우는 비례식의 성질이에요',
+  applies: p => p.op === 'prop' && !!propOf(p),
+  lines: p => {
+    const t = propOf(p)!.t, ans = Number(p.ans);
+    const outer = [t[0], t[3]], inner = [t[1], t[2]];
+    const qOuter = outer.includes('□');
+    const known = qOuter ? inner.map(Number) : outer.map(Number);
+    const other = Number((qOuter ? outer : inner).find(x => x !== '□'));
+    const prod = known[0] * known[1];
+    return [
+      { segs: [s(p.e!)], note: '바깥 두 수의 곱 = 안쪽 두 수의 곱' },
+      { segs: [s(`${outer.join(' × ')} = ${inner.join(' × ')}`)], note: '외항의 곱 = 내항의 곱', noEq: true },
+      { segs: [s(`□ = ${prod} ÷ ${other}`)], note: `${known.join(' × ')} = ${prod}`, noEq: true },
+      { segs: [s(ans, 'B', true)], note: `${prod} ÷ ${other} = ${ans}` },
+    ];
+  },
+  intro: () => '바깥 두 수의 곱과 안쪽 두 수의 곱이 같다는 걸 써 보자!',
+};
+function shareOf(p: P) {
+  const m = String(p.e || '').match(/^(\d+)\S* (\d+) : (\d+)\S* 비례배분할 때 (앞|뒤)의 수/);
+  return m ? { T: Number(m[1]), x: Number(m[2]), y: Number(m[3]), front: m[4] === '앞' } : null;
+}
+const shareParts: Strategy = {
+  id: 'shareParts', name: '전체를 조각으로', sub: '한 조각의 크기 먼저', when: '비의 합만큼 조각을 나눠 생각해요',
+  applies: p => p.op === 'share' && !!shareOf(p),
+  lines: p => {
+    const r = shareOf(p)!, n = r.x + r.y, one = r.T / n, mine = r.front ? r.x : r.y;
+    return [
+      { segs: [s(`${j.을(r.T)} ${r.x} : ${j.으로(r.y)} 나누기`)], note: `${r.T}를 ${r.x}조각과 ${r.y}조각으로 나눈다고 생각해요`.replace(/(\d+)를/, (m0, v) => j.을(v)) },
+      { segs: [s(`${r.x} + ${r.y} = `), s(n, 'O', true)], note: '전체는 모두 몇 조각인지 구해요', noEq: true },
+      { segs: [s(`${r.T} ÷ ${n} = `), s(one, 'O', true)], note: '한 조각의 크기', noEq: true },
+      { segs: [s(`${one} × ${mine} = `), s(one * mine, 'B', true)], note: `${r.front ? '앞' : '뒤'}의 수는 ${mine}조각`, noEq: true },
+      { segs: [s(one * mine, 'B', true)], note: `${r.front ? '앞' : '뒤'}의 수` },
+    ];
+  },
+  intro: () => '전체가 몇 조각인지, 한 조각은 얼마인지 먼저 구해 보자!',
+  hint: p => { const r = shareOf(p)!; return [`전체를 ${r.x} + ${r.y} = ${r.x + r.y}조각으로 나눠 봐`, `한 조각이 얼마인지 구하고, ${r.front ? r.x : r.y}조각이면 얼마일까?`]; },
+};
+const shareFrac: Strategy = {
+  id: 'shareFrac', name: '전체 × 분수', sub: '몇 분의 몇만큼', when: '학교에서 배우는 비례배분 식이에요',
+  applies: p => p.op === 'share' && !!shareOf(p),
+  lines: p => {
+    const r = shareOf(p)!, n = r.x + r.y, mine = r.front ? r.x : r.y;
+    return [
+      { segs: [s(`${j.을(r.T)} ${r.x} : ${j.으로(r.y)} 나누기`)], note: `${r.front ? '앞' : '뒤'}은 전체의 ${mine}/${n}` },
+      { segs: [s(`${r.T} × `), fs(`${mine}/${n}`, 'O')], note: `${r.x} + ${r.y} = ${n}이니 ${mine}/${n}` },
+      { segs: [s(r.T * mine / n, 'B', true)], note: `${r.T} × ${mine} ÷ ${n} = ${r.T * mine / n}` },
+    ];
+  },
+  intro: () => '전체에 몇 분의 몇을 곱해 보자!',
+};
+
 export const STRATEGIES: Record<string, Strategy> = Object.fromEntries([
   pwAdd, countOn, doubles, pwSub, countBack, addThink, placeAddSub, jumpTens, make10, from10, subSplit,
   comp, placeAdd3, seqSub, column, mulPlusOne, mulSplit, mulNine, mulSwap, mulAdd, mulDist, mulColumn,
   divMul, divShare, divRem, divLong, divEst, decUnits, decColumn, decWhole, decPlace, decSeqSub, unitFrac, wholeFrac,
   mixOrder, gcdList, lcmList, gcdDivide, lcmDivide, reduceStep, reduceGcd, lcdFrac, prodDen, fracMul, fracMulCancel, decMulInt, decMulFrac, decMulShift,
+  natDivFrac, fracDivNum, fracDivRecip, decDivShift, decDivFrac, rateStep, fracDivCommon, fracDivFlip, decDivScale, decDivFrac2, ratioSimplify, propRule, propCross, shareParts, shareFrac,
 ].map(x => [x.id, x]));
 
 // ─────────────────────────────────────────────
@@ -1293,6 +1619,13 @@ export const UNIT_PLANS: Record<string, Partial<Record<string, OpPlan>>> = {
   '5-1-3': { '+': { main: ['lcdFrac'], others: ['prodDen'] }, '-': { main: ['lcdFrac'], others: ['prodDen'] } },
   '5-2-0': { '×': { main: ['fracMul'], others: ['fracMulCancel'] } },
   '5-2-1': { '×': { main: ['decMulShift'], others: ['decMulFrac'] } },
+  // 6학년
+  '6-1-0': { '÷': { main: ['natDivFrac', 'fracDivNum', 'fracDivRecip'], others: ['fracDivRecip'] } },
+  '6-1-1': { '÷': { main: ['decDivShift'], others: ['decDivFrac'] } },
+  '5-2-2': { rate: { main: ['rateStep'], others: [] } },
+  '6-2-1': { '÷': { main: ['fracDivCommon'], school: 'fracDivFlip', others: [] } },
+  '6-2-2': { '÷': { main: ['decDivScale'], others: ['decDivFrac2'] } },
+  '6-2-0': { ':': { main: ['ratioSimplify'], others: [] }, prop: { main: ['propRule'], school: 'propCross', others: [] }, share: { main: ['shareParts'], school: 'shareFrac', others: [] } },
 };
 
 export function planFor(unitId: string, op: string): OpPlan | null {
