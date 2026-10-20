@@ -107,6 +107,38 @@ function VisualView({ v }: { v: Visual }) {
       </div>
     );
   }
+  if (v.kind === 'fracFlip') {
+    const F = ({ n, d, cls }: { n: number; d: number; cls: string }) => <span className={`inline-flex flex-col items-center leading-none text-2xl font-black ${cls}`}><span>{n}</span><span className="self-stretch border-t-[3px] border-current my-1" /><span>{d}</span></span>;
+    return (
+      <div className="flex flex-col items-center justify-center gap-1 min-h-[110px]">
+        <div className="flex items-center gap-3">
+          <F n={v.n} d={v.d} cls="text-slate-800" />
+          <span className="flex flex-col items-center text-rose-500 font-black text-xs"><span className="text-2xl leading-none">⇅</span>뒤집기</span>
+          <F n={v.d} d={v.n} cls="text-brand-600" />
+        </div>
+        <span className="text-xs font-bold text-slate-500">분모와 분자를 바꿔요 (역수)</span>
+      </div>
+    );
+  }
+  if (v.kind === 'propLink') {
+    // 앞의 짝(첫째·셋째) 주황, 뒤의 짝(둘째·넷째) 파랑. 위 괄호는 앞의 짝, 아래 괄호는 뒤의 짝
+    const box = (t: string, pair: 'a' | 'b', col: number) => <span style={{ gridRow: 2, gridColumn: col }} className={`min-w-[34px] h-9 px-1 rounded-lg border-2 flex items-center justify-center text-lg font-black ${pair === 'a' ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-brand-400 bg-brand-50 text-brand-700'}`}>{t}</span>;
+    const sep = (t: string, col: number) => <span style={{ gridRow: 2, gridColumn: col }} className="font-black text-slate-400 text-center px-0.5">{t}</span>;
+    const bracket = (pos: 'top' | 'bottom', on: boolean, from: number, to: number, cls: string) => (
+      <div style={{ gridRow: pos === 'top' ? 1 : 3, gridColumn: `${from} / ${to + 1}` }} className={`relative h-3 mx-3 ${pos === 'top' ? 'border-t-2 border-x-2 rounded-t-md mt-4' : 'border-b-2 border-x-2 rounded-b-md mb-4'} ${on ? cls : 'border-transparent'}`}>
+        {on && <span className={`absolute left-1/2 -translate-x-1/2 text-xs font-black whitespace-nowrap ${pos === 'top' ? '-top-4' : '-bottom-4'}`}>{v.k}</span>}
+      </div>
+    );
+    return (
+      <div className="flex items-center justify-center min-h-[110px]">
+        <div className="grid items-center" style={{ gridTemplateColumns: 'repeat(7, auto)' }}>
+          {bracket('top', v.show === 'both', 1, 5, 'border-amber-400 text-amber-600')}
+          {box(v.t[0], 'a', 1)}{sep(':', 2)}{box(v.t[1], 'b', 3)}{sep('=', 4)}{box(v.t[2], 'a', 5)}{sep(':', 6)}{box(v.t[3], 'b', 7)}
+          {bracket('bottom', v.show !== 'pairs', 3, 7, 'border-brand-400 text-brand-600')}
+        </div>
+      </div>
+    );
+  }
   if (v.kind === 'fracCalc') {
     return (
       <div className="flex items-center justify-center min-h-[110px] text-2xl md:text-3xl font-black text-slate-800 whitespace-nowrap">
