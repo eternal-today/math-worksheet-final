@@ -795,7 +795,7 @@ ${childName ? `아이 이름은 "${childName}"이야. 첫 줄에서 이름을 �
     setStars(newStars);
     localStorage.setItem("stars", String(newStars));
 
-    // 축하·명예의 전당: 수학과 한자를 합친 "번 별" 기준 (소원 쿠폰은 더 이상 새로 주지 않음)
+    // 축하·명예의 전당: 모든 과목을 합친 "번 별" 기준 (소원 쿠폰은 더 이상 새로 주지 않음)
     const cel = takeCelebration();
     if (cel) {
       const ms = { type: cel.hall ? 'hall' as const : 'stars' as const, value: cel.value };
@@ -1728,7 +1728,7 @@ ${wrongSummary}
               {milestone.type === 'hall' && (
                 <><div className="text-7xl mb-4">👑</div>
                   <h2 className="text-3xl font-black text-brand-600 font-display mb-2">명예의 전당 입성!</h2>
-                  <p className="text-slate-500 font-medium">수학과 한자로 별 {milestone.value}개! {config.childName?.trim() ? `${config.childName.trim()}는 ` : ""}진정한 에이스야 👑</p></>
+                  <p className="text-slate-500 font-medium">모든 과목에서 별 {milestone.value}개! {config.childName?.trim() ? `${config.childName.trim()}는 ` : ""}진정한 에이스야 👑</p></>
               )}
               <button onClick={() => setMilestone(null)} className="btn-primary w-full mt-6 py-4 text-lg">좋아! 🙌</button>
             </motion.div>
