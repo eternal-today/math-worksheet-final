@@ -1203,6 +1203,29 @@ const decMulInt: Strategy = {
   intro: () => '소수점을 떼고 자연수처럼 곱한 다음, 소수점을 찍어 보자!',
   hint: p => { const d = decMulOf(p); return [`소수점을 떼고 ${d.A} × ${d.B}부터 계산해 봐`, `소수점 아래 자릿수는 ${d.da} + ${d.db} = ${d.dp}자리야. 답은 얼마일까?`]; },
 };
+/** 소수점 이동: 자연수처럼 곱한 뒤 ÷10을 소수 자리 수만큼 */
+const decMulShift: Strategy = {
+  id: 'decMulShift', name: '곱하고 ÷10 하기', sub: '소수점이 한 칸씩', when: '왜 소수점 아래 자릿수를 더하는지 보여요',
+  applies: isDecMul,
+  lines: p => {
+    const d = decMulOf(p);
+    const who = (k: number) => (k <= d.da ? p.a : p.b);   // k번째 ÷10이 어느 수 때문인지
+    const asDiv = (x: number, dp: number) => (dp ? `${j.은(x)} ${j.을(toScaled(String(x), dp))} ${10 ** dp}${dp === 1 ? '으로' : '으로'} 나눈 수` : '');
+    const out: Line[] = [
+      { segs: [s(`${p.a} × ${p.b}`)], note: [asDiv(p.a, d.da), asDiv(p.b, d.db)].filter(Boolean).join(', ') },
+      { segs: [s(`${d.A} × ${d.B} = `), s(d.P, 'O', true)], note: '소수점을 떼고 자연수처럼 곱해요', noEq: true },
+    ];
+    let cur = d.P;
+    for (let k = 1; k < d.dp; k++) {
+      const prev = decText(cur, k - 1);
+      out.push({ segs: [s(`${prev} ÷ 10 = `), s(decText(d.P, k), 'O', true)], note: `${who(k)} 때문에 ÷10: 소수점이 한 칸 왼쪽으로`, noEq: true });
+    }
+    out.push({ segs: [s(decText(d.P, d.dp), 'B', true)], note: `${d.dp > 1 ? `${who(d.dp)} 때문에 한 번 더 ÷10. ` : `${who(1)} 때문에 ÷10. `}÷10을 ${d.dp}번 = 소수점이 ${d.dp}칸 (${d.da} + ${d.db} = ${d.dp})` });
+    return out;
+  },
+  intro: () => '소수점을 떼고 곱한 다음, ÷10을 해서 소수점을 옮겨 보자!',
+  hint: p => { const d = decMulOf(p); return [`소수점을 떼고 ${d.A} × ${d.B}부터 계산해 봐`, `${p.a}에서 ÷10 ${d.da}번, ${p.b}에서 ÷10 ${d.db}번. 소수점을 왼쪽으로 ${d.dp}칸 옮기면 얼마일까?`]; },
+};
 const decMulFrac: Strategy = {
   id: 'decMulFrac', name: '분수로 바꿔 곱하기', sub: '10분의, 100분의', when: '왜 소수점 아래 자릿수를 더하는지 알 수 있어요',
   applies: isDecMul,
@@ -1227,7 +1250,7 @@ export const STRATEGIES: Record<string, Strategy> = Object.fromEntries([
   pwAdd, countOn, doubles, pwSub, countBack, addThink, placeAddSub, jumpTens, make10, from10, subSplit,
   comp, placeAdd3, seqSub, column, mulPlusOne, mulSplit, mulNine, mulSwap, mulAdd, mulDist, mulColumn,
   divMul, divShare, divRem, divLong, divEst, decUnits, decColumn, decWhole, decPlace, decSeqSub, unitFrac, wholeFrac,
-  mixOrder, gcdList, lcmList, gcdDivide, lcmDivide, reduceStep, reduceGcd, lcdFrac, prodDen, fracMul, fracMulCancel, decMulInt, decMulFrac,
+  mixOrder, gcdList, lcmList, gcdDivide, lcmDivide, reduceStep, reduceGcd, lcdFrac, prodDen, fracMul, fracMulCancel, decMulInt, decMulFrac, decMulShift,
 ].map(x => [x.id, x]));
 
 // ─────────────────────────────────────────────
@@ -1269,7 +1292,7 @@ export const UNIT_PLANS: Record<string, Partial<Record<string, OpPlan>>> = {
   '5-1-2': { reduce: { main: ['reduceStep'], others: ['reduceGcd'] } },
   '5-1-3': { '+': { main: ['lcdFrac'], others: ['prodDen'] }, '-': { main: ['lcdFrac'], others: ['prodDen'] } },
   '5-2-0': { '×': { main: ['fracMul'], others: ['fracMulCancel'] } },
-  '5-2-1': { '×': { main: ['decMulFrac'], others: ['decMulInt'] } },
+  '5-2-1': { '×': { main: ['decMulShift'], others: ['decMulFrac'] } },
 };
 
 export function planFor(unitId: string, op: string): OpPlan | null {

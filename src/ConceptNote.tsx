@@ -84,18 +84,40 @@ function VisualView({ v }: { v: Visual }) {
     );
   }
   if (v.kind === 'fracArea') {
-    // 1단계: 세로로 cols칸만 나눠 colsOn칸 칠하기(파랑) → 2단계: 가로로 rows줄 나눠 rowsOn줄(주황), 겹친 곳(보라)
-    const R = v.rowsOn != null ? v.rows : 1;
-    const size = 96;
+    // 1단계: 세로로 나눠 칠하기(파랑) → 2단계: 칠한 부분 안에서만 가로로 나눠 고르기(보라) → 3단계: 가로선을 끝까지 이어 같은 크기 칸으로 세기
+    const stage = v.stage ?? (v.rowsOn != null ? 3 : 1);
+    const size = 96, cw = size / v.cols;
     return (
       <div className="flex items-center justify-center min-h-[110px]">
-        <div className="grid gap-[2px] bg-slate-500 border-2 border-slate-500 rounded-sm" style={{ gridTemplateColumns: `repeat(${v.cols}, ${size / v.cols}px)`, gridTemplateRows: `repeat(${R}, ${size / R}px)` }}>
-          {Array.from({ length: R * v.cols }).map((_, i) => {
-            const r = Math.floor(i / v.cols), c = i % v.cols;
-            const inC = c < v.colsOn, inR = v.rowsOn != null && r < v.rowsOn;
-            return <div key={i} className={inC && inR ? 'bg-violet-500' : inC ? 'bg-brand-200' : inR ? 'bg-amber-200' : 'bg-white'} />;
+        <div className="flex gap-[2px] bg-slate-500 border-2 border-slate-500 rounded-sm" style={{ height: size }}>
+          {Array.from({ length: v.cols }).map((_, c) => {
+            const inC = c < v.colsOn;
+            const split = stage === 3 || (stage === 2 && inC);
+            const n = split ? v.rows : 1;
+            return (
+              <div key={c} className="flex flex-col gap-[2px]" style={{ width: cw }}>
+                {Array.from({ length: n }).map((_, r) => {
+                  const pick = inC && split && v.rowsOn != null && r < v.rowsOn;
+                  return <div key={r} className={`flex-1 ${pick ? 'bg-violet-500' : inC ? 'bg-brand-200' : 'bg-white'} ${stage === 3 && !inC ? 'bg-slate-50' : ''}`} />;
+                })}
+              </div>
+            );
           })}
         </div>
+      </div>
+    );
+  }
+  if (v.kind === 'shiftSteps') {
+    // 위에서 아래로: 72 ↓÷10 7.2 ↓÷10 0.72
+    return (
+      <div className="flex flex-col items-center justify-center gap-0.5 min-h-[110px]">
+        <span className="text-xl font-black text-slate-800">{v.start}</span>
+        {v.steps.map((st, i) => (
+          <React.Fragment key={i}>
+            <span className="text-xs font-black text-rose-500 flex items-center gap-1"><span className="text-base leading-none">↓</span>÷10 <span className="text-rose-400 font-bold">({st.label.replace(/ ÷10$/, '')})</span></span>
+            <span className={`text-xl font-black ${i === v.steps.length - 1 ? 'text-brand-600' : 'text-slate-800'}`}>{st.value}</span>
+          </React.Fragment>
+        ))}
       </div>
     );
   }

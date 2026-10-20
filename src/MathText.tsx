@@ -25,7 +25,7 @@ export function MathText({ text, className = '', nowrap = false }: { text: strin
   const s = String(text ?? '');
   if (!hasFrac(s)) return <span className={className}>{pretty(s)}</span>;
   return (
-    <span className={`inline-flex items-center flex-wrap ${className}`}>
+    <span className={`${nowrap ? 'inline-flex items-center' : 'inline'} ${className}`}>
       {mathTokens(s).map((tk, i) => tk.t === 'txt'
         ? <span key={i} className={nowrap ? 'whitespace-pre' : 'whitespace-pre-wrap'}>{pretty(tk.v)}</span>
         : <React.Fragment key={i}><Frac w={tk.w} n={tk.n} d={tk.d} /></React.Fragment>)}

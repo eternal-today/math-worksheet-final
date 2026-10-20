@@ -23,7 +23,9 @@ export type Visual =
   /** 분수 나눠 담기: 자연수 막대들과 분수 조각들 */
   | { kind: 'fracSplit'; d: number; wholes: Tone[]; pieces: Tone[] }
   /** 분수 곱셈 넓이 모형: rows×cols 칸, 앞 colsOn칸을 연하게, 그중 위 rowsOn줄을 진하게 */
-  | { kind: 'fracArea'; rows: number; cols: number; colsOn: number; rowsOn?: number }
+  | { kind: 'fracArea'; rows: number; cols: number; colsOn: number; rowsOn?: number; stage?: 1 | 2 | 3 }
+  /** 소수점 옮기기: 72 →(÷10) 7.2 →(÷10) 0.72 */
+  | { kind: 'shiftSteps'; start: string; steps: { label: string; value: string }[] }
   /** 혼합 계산 식에 순서 번호·색 붙이기 */
   | { kind: 'mixMarks'; e: string }
   /** 수 목록 칩 (ring: 공통인 수, hl: 고른 수) */
@@ -450,26 +452,26 @@ export const CONCEPT_NOTES: ConceptNoteData[] = [
   // ───────────── 5학년 2학기 ─────────────
   {
     unitId: '5-2-0', term: '분수의 곱셈',
-    def: '2/3 × 3/4은 **3/4의 2/3**만큼이에요. 분수끼리 곱할 때는 **분자끼리, 분모끼리** 곱하고 약분해요. 자연수는 분자에만 곱하고, 대분수는 **가분수로 바꿔서** 곱해요.',
+    def: '2/3 × 3/4은 **3/4의 2/3**만큼이에요. 3/4만큼을 먼저 칠하고, **칠한 부분 안에서만** 2/3를 골라요. 분수끼리 곱할 때는 **분자끼리, 분모끼리** 곱하고 약분해요. 대분수는 **가분수로 바꿔서** 곱해요.',
     example: exf('2/3', '×', '3/4', '1/2'),
     panels: [
-      { title: '1. 세로로 4칸, 3칸 칠하기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3 }, caption: '전체의 3/4' },
-      { title: '2. 가로로 3줄, 2줄 겹치기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, rowsOn: 2 }, caption: '전체 칸 4 × 3 = 12 (분모끼리), 겹친 칸 3 × 2 = 6 (분자끼리) → 6/12' },
-      { title: '3. 약분하기', visual: { kind: 'expr', text: '6/12 = 1/2' }, caption: '6과 12를 6으로 나눠요' },
+      { title: '1. 3/4 칠하기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, stage: 1 }, caption: '세로로 4칸 중 3칸, 전체의 3/4' },
+      { title: '2. 칠한 부분의 2/3', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, rowsOn: 2, stage: 2 }, caption: '칠한 3/4 안에서만 3줄로 나눠 2줄 → 3/4의 2/3' },
+      { title: '3. 선을 이어 칸 세기', visual: { kind: 'fracArea', rows: 3, cols: 4, colsOn: 3, rowsOn: 2, stage: 3 }, caption: '같은 크기 칸으로 4 × 3 = 12칸(분모끼리), 고른 칸 3 × 2 = 6칸(분자끼리) → 6/12 = 1/2' },
     ],
     caution: { text: '대분수는 자연수 부분까지 함께 곱해야 해요. 가분수로 바꾸면 안전해요.', wrong: '1 1/2 × 1/3 = 1 1/6', wrongWhy: '자연수 1은 그대로 두고 분수끼리만 곱했어요', right: '1 1/2 × 1/3 = 3/2 × 1/3 = 1/2', rightWhy: '대분수를 가분수로 바꿔요' },
     checks: [exf('4/9', '×', '3', '1 1/3'), exf('3/5', '×', '5/6', '1/2'), exf('1 1/3', '×', '3/4', '1')],
   },
   {
     unitId: '5-2-1', term: '소수의 곱셈',
-    def: '소수를 **분수로 바꿔** 곱해 보면, 10분의 몇 × 10분의 몇 = **100분의 몇**이 돼요. 100분의 몇은 소수 두 자리예요. 그래서 소수점 아래 자릿수를 **더한 만큼** 소수점을 찍어요.',
+    def: '소수 한 자리 수는 **자연수 ÷ 10**이에요 (1.2 = 12 ÷ 10). 그래서 소수점을 떼고 **자연수처럼 곱한** 다음, 두 수의 소수 자리 수만큼 **÷10**을 해요. ÷10을 한 번 할 때마다 소수점이 **한 칸 왼쪽**으로 가요.',
     example: ex(1.2, '×', 0.6, '0.72'),
     panels: [
-      { title: '1. 분수로 바꾸기', visual: { kind: 'expr', text: '12/10 × 6/10' }, caption: '1.2 = 12/10, 0.6 = 6/10 (소수 한 자리는 10분의 몇)' },
-      { title: '2. 분자끼리, 분모끼리', visual: { kind: 'expr', text: '12/10 × 6/10 = 72/100' }, caption: '12 × 6 = 72, 10 × 10 = 100' },
-      { title: '3. 소수로 바꾸기', visual: { kind: 'expr', text: '72/100 = 0.72' }, caption: '100분의 몇은 소수 두 자리 → 한 자리 + 한 자리 = 두 자리' },
+      { title: '1. 자연수 ÷ 10으로 보기', visual: { kind: 'expr', text: '1.2 = 12 ÷ 10, 0.6 = 6 ÷ 10' }, caption: '소수 한 자리 수는 자연수를 10으로 나눈 수' },
+      { title: '2. 자연수처럼 곱하기', visual: { kind: 'expr', text: '12 × 6 = 72' }, caption: '소수점을 떼고 곱해요' },
+      { title: '3. ÷10을 두 번', visual: { kind: 'shiftSteps', start: '72', steps: [{ label: '1.2 때문에 ÷10', value: '7.2' }, { label: '0.6 때문에 ÷10', value: '0.72' }] }, caption: '÷10 한 번에 소수점이 한 칸 → 1 + 1 = 2칸' },
     ],
-    caution: { text: '소수점 아래 자릿수는 두 수의 자릿수를 더해요.', wrong: '1.2 × 0.6 = 7.2', wrongWhy: '10분의 72로 계산했어요. 10 × 10 = 100이에요', right: '1.2 × 0.6 = 0.72', rightWhy: '100분의 72 = 0.72' },
+    caution: { text: '두 수의 소수 자리 수만큼 ÷10을 해야 해요.', wrong: '1.2 × 0.6 = 7.2', wrongWhy: '1.2 때문에 ÷10은 했지만, 0.6 때문에 한 번 더 하지 않았어요', right: '1.2 × 0.6 = 0.72', rightWhy: '72 ÷ 10 ÷ 10 = 0.72' },
     checks: [ex(2.3, '×', 4, '9.2'), ex(0.8, '×', 1.5, '1.2'), ex(3.25, '×', 6, '19.5')],
   },
 ];
