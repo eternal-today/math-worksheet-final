@@ -41,6 +41,7 @@ const ITEMS: Item[] = [
   { id: 12, key: 'thinking_steps', type: 'json', weight: () => count('thinking_records') },    // 생각: 유형별 난이도 단계
   { id: 13, key: 'thinking_seen', type: 'json', weight: () => count('thinking_records') },     // 생각: 만난 유형 (전략 카드로 소개한 것)
   { id: 14, key: 'thinking_medals', type: 'json', weight: () => count('thinking_records') },   // 생각: 스무고개 메달
+  { id: 15, key: 'ace_chance_set', type: 'json' },   // 에이스 홈: 부모님이 고친 찬스 목록·단계 설정
 ];
 const BY_ID = new Map(ITEMS.map(i => [i.id, i]));
 

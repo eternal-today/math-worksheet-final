@@ -67,6 +67,8 @@ export interface Coupon {
   name: string;
   desc: string;
   price: number;
+  /** 산 때의 유효기간(일). 나중에 단계 설정을 바꿔도 이미 산 쿠폰은 그대로 */
+  expiryDays?: number | null;
   boughtAt: number;
   usedAt?: number;
   canceledAt?: number;
@@ -339,7 +341,7 @@ export function giveStars(amount: number, note: string): boolean {
 // ─────────────────────────────────────────────
 export function expiresAt(c: Coupon): number | null {
   if (c.tier === 'legacy') return null;
-  const d = TIER_BY_ID[c.tier]?.expiryDays;
+  const d = c.expiryDays !== undefined ? c.expiryDays : TIER_BY_ID[c.tier]?.expiryDays;
   return d ? c.boughtAt + d * DAY : null;
 }
 export function couponState(c: Coupon, now = Date.now()): CouponState {
@@ -389,7 +391,7 @@ export function buyChance(ch: Chance): Coupon | null {
   const id = newId();
   const c: Coupon = {
     id, chanceId: ch.id, tier: ch.tier, emoji: ch.emoji, name: ch.name, desc: ch.desc,
-    price: tier.price, boughtAt: id, updatedAt: id,
+    price: tier.price, expiryDays: tier.expiryDays, boughtAt: id, updatedAt: id,
   };
   all[id] = c;
   writeJSON(K.coupons, all);
