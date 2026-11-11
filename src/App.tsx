@@ -31,6 +31,7 @@ import { startAceSync } from './ace/aceSync';
 import { LINKS } from './ace/links';
 import { AceNav } from './ace/AceNav';
 import { AceRewardCards, AceRewardsSheet, aceGoals } from './ace/Rewards';
+import { onPrefsApplied, prefsChanged } from './ace/prefs';
 import { AceSaveBar, confirmLeave } from './ace/SaveBar';
 import { geminiKey, hubGeminiKey, maskKey } from './ace/settings';
 
@@ -268,9 +269,14 @@ export default function App() {
     setConceptDone(prev => {
       const next = { ...prev, [unitId]: prev[unitId] || Date.now() };
       try { localStorage.setItem("concept_done", JSON.stringify(next)); } catch { }
+      prefsChanged();   // 다른 기기에도 (prefs.ts 합치는 기록)
       return next;
     });
   };
+  // 다른 기기에서 읽은 개념노트가 넘어오면 다시 읽음
+  useEffect(() => onPrefsApplied(() => {
+    try { setConceptDone(JSON.parse(localStorage.getItem("concept_done") || "{}")); } catch { }
+  }), []);
   /** 문제의 단원 ID (예전 기록은 단원 이름으로 찾음) */
   const unitIdOf = (p?: MathProblem) => p?.unitId || UNITS.find(u => u.name === p?.unitName)?.id;
   const [milestone, setMilestone] = useState<{ type: 'stars' | 'wish' | 'hall'; value: number } | null>(null);

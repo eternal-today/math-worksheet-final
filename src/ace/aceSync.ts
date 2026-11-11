@@ -17,7 +17,7 @@ import {
   SyncProfile, readDirty, writeDirty, walletRecordFor, hanjaRecordFor, englishRecordFor, thinkingRecordFor, walletUpdatedAt,
   applyServerWallet, applyServerHanja, applyServerEnglish, applyServerThinking, applyServerMath, notifyWallet, onWalletDirty,
 } from './wallet';
-import { PREFS_VERSION, applyServerPrefs, initPrefs, prefsOutbox, prefsPendingCount, prefsSent, setPrefsHook } from './prefs';
+import { PREFS_VERSION, applyServerPrefs, initPrefs, prefsMergeOutbox, prefsMergeSent, prefsOutbox, prefsPendingCount, prefsSent, setPrefsHook } from './prefs';
 
 const KEY = {
   url: 'ace_sync_url', token: 'ace_sync_token',
@@ -148,7 +148,15 @@ async function syncPrefs(cfg: { url: string; token: string }) {
   const res = await post(cfg.url, { action: 'sync', token: cfg.token, profileId: 'prefs', since, records: records.map(r => ({ ...r, profileId: 'prefs' })) });
   prefsSent(sent);
   await applyServerPrefs(Array.isArray(res.records) ? res.records : [], cfg.token);
-  localStorage.setItem(KEY.cursor('prefs'), String(res.seq || since));
+  let seq = res.seq || since;
+  // 합치는 기록(기억 상자 등): 서버 것과 합친 뒤에 보냄 → 다른 기기가 먼저 올린 것을 덮지 않음
+  const merged = prefsMergeOutbox();
+  if (merged.length) {
+    const r2 = await post(cfg.url, { action: 'sync', token: cfg.token, profileId: 'prefs', since: seq, records: merged.map(r => ({ ...r, profileId: 'prefs' })) });
+    prefsMergeSent();
+    seq = r2.seq || seq;
+  }
+  localStorage.setItem(KEY.cursor('prefs'), String(seq));
   localStorage.setItem(KEY.prefsVer, String(PREFS_VERSION));
 }
 

@@ -50,7 +50,7 @@ const BY_ID = new Map(ITEMS.map(i => [i.id, i]));
  * 예전 코드는 모르는 항목을 건너뛰면서도 받은 위치(cursor)는 앞으로 옮겨서, 다른 기기가 먼저 올린 새 항목을
  * 영영 받지 못했음 (2026-11-01 생각나무가 부모님 기기로 넘어오지 않던 원인). 판 번호가 오르면 처음부터 다시 받는다.
  */
-export const PREFS_VERSION = 2;
+export const PREFS_VERSION = 3;   // 3: 합치는 기록(한자·영어 기억 상자, 영어 진행, 수학 개념노트) 추가
 
 /**
  * 쌓기만 하는 기록 — 기기마다 따로 쌓은 것을 모두 합침 (가장 나중 것이 이기는 방식이 아님)
@@ -58,6 +58,48 @@ export const PREFS_VERSION = 2;
  */
 const LOGS: Record<string, string> = { thinking_drops: 'thinking_drops_log' };
 const LOG_DIRTY = 'ace_prefs_log_dirty';   // [[이름, 시각]] 아직 올리지 않은 것
+
+/**
+ * 합치는 기록 — 항목(글자·표현·단원)마다 따로 비교해 합침. 한쪽에만 있는 것은 더하고, 둘 다 있으면 규칙대로 고름.
+ *   hanja_cards / english_cards : 기억 상자(도감). 더 최근에 푼 쪽(last)이 이김
+ *   english_progress             : 영어 단계 진행. 단계는 큰 쪽, 본 개념은 합침, 확인은 한 번이라도 했으면 함
+ *   concept_done                 : 수학 개념노트 다 읽음. 둘 다 있으면 먼저 읽은 시각
+ * 서버 칸 하나에 담는 글자 수 한계가 있어 짧게 줄이고 여러 묶음(bucket)으로 나눠 올림. 바뀐 묶음만 다시 올림.
+ * 다른 기기에서 받은 값이 합쳐지면 'ace-prefs' 이벤트 → 각 앱이 다시 읽음.
+ */
+interface MergeSpec {
+  key: string; base: number; buckets: number;
+  pack: (v: any) => any; unpack: (p: any) => any;
+  /** 둘 다 있을 때 남길 값 */
+  merge: (a: any, b: any) => any;
+}
+const cardPack = (c: any) => [c.box, c.due, c.seen, c.wrong, c.last];
+const cardUnpack = (p: any) => ({ box: p[0], due: p[1], seen: p[2], wrong: p[3], last: p[4] });
+const newerCard = (a: any, b: any) => ((Number(b?.last) || 0) > (Number(a?.last) || 0) ? b : a);
+const MERGES: MergeSpec[] = [
+  { key: 'hanja_cards', base: 100000, buckets: 8, pack: cardPack, unpack: cardUnpack, merge: newerCard },
+  { key: 'english_cards', base: 100100, buckets: 16, pack: cardPack, unpack: cardUnpack, merge: newerCard },
+  {
+    key: 'english_progress', base: 100200, buckets: 1, pack: v => v, unpack: v => v,
+    merge: (a, b) => Array.isArray(a) || Array.isArray(b) ? [...new Set([...(a || []), ...(b || [])])]
+      : typeof a === 'boolean' || typeof b === 'boolean' ? !!a || !!b
+        : typeof a === 'number' || typeof b === 'number' ? Math.max(Number(a) || 0, Number(b) || 0) : (b ?? a),
+  },
+  { key: 'concept_done', base: 100300, buckets: 1, pack: v => v, unpack: v => v, merge: (a, b) => Math.min(Number(a) || Infinity, Number(b) || Infinity) },
+];
+const MERGE_META = 'ace_prefs_merge_meta';   // { 기록 번호: 서버와 마지막으로 맞춘 묶음의 지문 }
+
+function bucketOf(k: string, n: number): number { let h = 0; for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0; return h % n; }
+function hashStr(s: string): string { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; } return h.toString(36) + ':' + s.length; }
+/** 이 기기 값 → 묶음별 { 키: 줄인 값 } (키 순서 고정) */
+function bucketsOf(spec: MergeSpec): Record<string, any>[] {
+  const all = readJ<Record<string, any>>(spec.key, {});
+  const out: Record<string, any>[] = Array.from({ length: spec.buckets }, () => ({}));
+  for (const k of Object.keys(all).sort()) out[bucketOf(k, spec.buckets)][k] = spec.pack(all[k]);
+  return out;
+}
+const fingerprint = (e: Record<string, any>) => hashStr(JSON.stringify(e));
+let mergePending = new Map<number, string>();
 
 const META = 'ace_prefs_meta';     // { id: { u: 고친 시각, h: 마지막으로 맞춘 값 } }
 const DIRTY = 'ace_prefs_dirty';   // 아직 올리지 않은 항목 번호
@@ -84,7 +126,12 @@ function markDirty(id: number) {
   const d = readJ<number[]>(DIRTY, []);
   if (!d.includes(id)) { d.push(id); writeJ(DIRTY, d); }
 }
-export function prefsPendingCount(): number { return readJ<number[]>(DIRTY, []).length + readJ<[string, number][]>(LOG_DIRTY, []).length; }
+export function prefsPendingCount(): number {
+  const mm = readJ<Record<string, string>>(MERGE_META, {});
+  let n = 0;
+  for (const spec of MERGES) bucketsOf(spec).forEach((e, i) => { const id = spec.base + i; if (Object.keys(e).length && fingerprint(e) !== mm[id]) n++; });
+  return readJ<number[]>(DIRTY, []).length + readJ<[string, number][]>(LOG_DIRTY, []).length + n;
+}
 
 /** 쌓기 기록 읽기 */
 export function logRead(name: string): Record<string, number> { return readJ<Record<string, number>>(LOGS[name], {}); }
@@ -179,6 +226,32 @@ export async function prefsOutbox(token: string): Promise<{ records: any[]; sent
   return { records, sent };
 }
 
+/**
+ * 합치는 기록 보내기: 서버 것을 먼저 받아 합친 뒤(applyServerPrefs) 부름.
+ * 서버와 맞춘 뒤 바뀐 묶음만 보냄. 보내는 묶음은 이미 서버 것과 합친 것이라 덮어써도 잃는 것이 없음.
+ */
+export function prefsMergeOutbox(): any[] {
+  const mm = readJ<Record<string, string>>(MERGE_META, {});
+  const records: any[] = [];
+  mergePending = new Map();
+  for (const spec of MERGES) {
+    bucketsOf(spec).forEach((e, i) => {
+      const id = spec.base + i, fp = fingerprint(e);
+      if (!Object.keys(e).length || fp === mm[id]) return;
+      records.push({ ts: id, updatedAt: Date.now(), merge: spec.key, e });
+      mergePending.set(id, fp);
+    });
+  }
+  return records;
+}
+/** 합치는 기록을 보낸 뒤 */
+export function prefsMergeSent() {
+  const mm = readJ<Record<string, string>>(MERGE_META, {});
+  for (const [id, fp] of mergePending) mm[id] = fp;
+  mergePending = new Map();
+  writeJ(MERGE_META, mm);
+}
+
 /** 올린 뒤: 그 사이 다시 바뀌지 않은 항목만 대기열에서 뺌 */
 export function prefsSent(sent: Map<number, number>) {
   const meta = readJ<Meta>(META, {});
@@ -195,6 +268,25 @@ export async function applyServerPrefs(records: any[], token: string) {
     if (r && r.log && LOGS[r.log]) {   // 쌓기 기록: 없던 것만 더함
       const m = logRead(r.log);
       if (m[r.ts] === undefined && typeof r.v === 'number') { m[r.ts] = r.v; writeJ(LOGS[r.log], m); changed = true; }
+      continue;
+    }
+    const spec = r && r.merge ? MERGES.find(x => x.key === r.merge) : undefined;
+    if (spec) {   // 합치는 기록: 항목마다 합침
+      if (!r.e || typeof r.e !== 'object') continue;
+      const local = readJ<Record<string, any>>(spec.key, {});
+      let touched = false;
+      for (const [k, p] of Object.entries(r.e)) {
+        let theirs: any;
+        try { theirs = spec.unpack(p); } catch { continue; }
+        const mine = local[k];
+        const next = mine === undefined ? theirs : spec.merge(mine, theirs);
+        if (JSON.stringify(next) !== JSON.stringify(mine)) { local[k] = next; touched = true; }
+      }
+      if (touched) { writeJ(spec.key, local); changed = true; }
+      // 서버에 있는 묶음의 지문 기억 → 이 기기에만 있는 것이 있으면 다음에 다시 올림
+      const mm = readJ<Record<string, string>>(MERGE_META, {});
+      mm[r.ts] = fingerprint(Object.fromEntries(Object.keys(r.e).sort().map(k => [k, r.e[k]])));
+      writeJ(MERGE_META, mm);
       continue;
     }
     const it = r && BY_ID.get(Number(r.ts));
